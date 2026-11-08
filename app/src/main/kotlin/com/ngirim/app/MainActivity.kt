@@ -13,6 +13,8 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -22,9 +24,14 @@ import android.text.InputType
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.EditText
+import android.util.Base64
 import android.widget.FrameLayout
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import rikka.shizuku.Shizuku
 import java.io.File
 import java.net.Inet4Address
@@ -41,10 +48,11 @@ import javax.microedition.khronos.opengles.GL10
 
 class MainActivity : Activity() {
 
-    private enum class Kind { APK, DIR }
-    private class Route(val name: String, val kind: Kind, val src: String?, val dst: String)
-    private class ApkEntry(val label: String, val pkg: String, val ver: String, val paths: List<String>, val size: Long)
-    private class DirEntry(val name: String, val size: Long, val isDir: Boolean)
+    private class ApkEntry(
+        val label: String, val pkg: String, val ver: String, val verCode: Long, val paths: List<String>,
+        val size: Long, val system: Boolean, val minSdk: Int, val targetSdk: Int
+    )
+    private class DirEntry(val name: String, val size: Long, val isDir: Boolean, val mtime: Long = 0L)
     private class Peer(val name: String, val host: String, val port: Int, val svc: String?) {
         @Volatile var misses = 0
     }
@@ -56,16 +64,7 @@ class MainActivity : Activity() {
     }
 
     private val base = "/sdcard/Ngirim"
-    private val customRoute = 6 // sinkron dengan kCustomRoute di native-lib.cpp
-    private val routes = listOf(
-        Route("APK - backup aplikasi terpasang", Kind.APK, null, "$base/APK"),
-        Route("Foto - DCIM/Camera", Kind.DIR, "/sdcard/DCIM/Camera", "$base/Foto"),
-        Route("Game OBB - backup", Kind.DIR, "/sdcard/Android/obb", "$base/obb"),
-        Route("Game DATA - backup", Kind.DIR, "/sdcard/Android/data", "$base/data"),
-        Route("Game OBB - restore", Kind.DIR, "$base/obb", "/sdcard/Android/obb"),
-        Route("Game DATA - restore", Kind.DIR, "$base/data", "/sdcard/Android/data"),
-        Route("Kustom - pilih folder sendiri", Kind.DIR, null, ""),
-    )
+    private val trashDir = "/sdcard/Ngirim/.Sampah"
 
     private val reqShizuku = 1001
     private val reqNearby = 2001
@@ -74,14 +73,35 @@ class MainActivity : Activity() {
     private val probeExec = Executors.newSingleThreadScheduledExecutor()
     private var probeJob: ScheduledFuture<*>? = null
     private val prefs by lazy { getSharedPreferences("ngirim", MODE_PRIVATE) }
-    private val myName: String = Build.MODEL ?: "Android"
+    @Volatile private var myName: String = Build.MODEL ?: "Android"
 
     @Volatile private var svc: IFileService? = null
-    @Volatile private var routeIdx = 0
-    @Volatile private var apks: List<ApkEntry> = emptyList()
-    @Volatile private var dirs: List<DirEntry> = emptyList()
-    @Volatile private var customSrc = ""
-    @Volatile private var customDst = ""
+
+    // pengaturan
+    @Volatile private var dark = false
+    @Volatile private var showHidden = false
+    @Volatile private var useTrash = true
+    @Volatile private var xapkDir = "$base/XAPK"
+
+    // file manager (tab Lokal)
+    @Volatile private var fmPath = "/sdcard"
+    @Volatile private var fmRaw: List<DirEntry> = emptyList()
+    @Volatile private var fmView: List<DirEntry> = emptyList()
+    @Volatile private var fmError = ""
+    @Volatile private var fmSort = 0
+    @Volatile private var fmAsc = true
+    @Volatile private var fmFilter = ""
+    private val fmVer = AtomicInteger()
+    @Volatile private var clip: List<String> = emptyList()
+    @Volatile private var clipCut = false
+
+    // APK
+    @Volatile private var allApps: List<ApkEntry> = emptyList()
+    @Volatile private var apkView: List<ApkEntry> = emptyList()
+    @Volatile private var apkFilter = ""
+    @Volatile private var apkSystem = false
+    private val apkQueue = ArrayDeque<String>()
+    @Volatile private var rootView: FrameLayout? = null
 
     // jaringan
     private val peers = ArrayList<Peer>()
@@ -132,7 +152,7 @@ class MainActivity : Activity() {
             Native.setShizuku(true, "Shizuku terhubung")
             Native.log("OK     service Shizuku aktif")
             try { svc?.setAllowBrowse(allowBrowse) } catch (_: Throwable) {}
-            refresh()
+            fmLoad()
             paneLoad(0); paneLoad(1)
         }
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -155,15 +175,31 @@ class MainActivity : Activity() {
         shizukuWatch.execute { shizukuTick() }
     }
 
-    private val cb = object : IProgressCallback.Stub() {
+    private val fmCb = object : IProgressCallback.Stub() {
         override fun onProgress(current: String, done: Long, total: Long, bytesPerSec: Double) {
-            Native.setProgress(true, done, total, bytesPerSec, current)
+            Native.setFmProgress(true, done, total, bytesPerSec, current)
         }
         override fun onLog(msg: String) { Native.log(msg) }
         override fun onFinish(ok: Boolean, message: String, done: Long, total: Long) {
-            Native.setProgress(false, done, total, 0.0, "")
+            Native.setFmProgress(false, done, total, 0.0, "")
             Native.log((if (ok) "OK     " else "ERR    ") + message)
-            refresh()
+            fmLoad()
+        }
+    }
+
+    private val apkCb = object : IProgressCallback.Stub() {
+        override fun onProgress(current: String, done: Long, total: Long, bytesPerSec: Double) {
+            Native.setApkProgress(true, done, total, bytesPerSec, current)
+        }
+        override fun onLog(msg: String) { Native.log(msg) }
+        override fun onFinish(ok: Boolean, message: String, done: Long, total: Long) {
+            Native.log((if (ok) "OK     " else "ERR    ") + message)
+            val more = synchronized(apkQueue) { apkQueue.isNotEmpty() }
+            if (ok && more) worker.execute { sendNextApkChunk() }
+            else {
+                synchronized(apkQueue) { apkQueue.clear() }
+                Native.setApkProgress(false, done, total, 0.0, "")
+            }
         }
     }
 
@@ -199,7 +235,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        Native.setRoutes(routes.map { it.name }.toTypedArray())
+        loadSettings()
         Native.setShizuku(false, "Menunggu Shizuku...")
         Native.log("Ngirim v${BuildConfig.VERSION_NAME} siap")
         bookmarks.addAll((prefs.getString("bookmarks", "") ?: "").split("\n").filter { it.isNotEmpty() })
@@ -244,7 +280,7 @@ class MainActivity : Activity() {
         }
 
         val root = FrameLayout(this).apply {
-            setBackgroundColor(0xFF0F0F14.toInt())
+            setBackgroundColor(0xFF0078D7.toInt()) // aksen, sama dengan title bar
             addView(glView, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setOnApplyWindowInsetsListener { v, insets ->
                 val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
@@ -252,7 +288,11 @@ class MainActivity : Activity() {
                 WindowInsets.CONSUMED
             }
         }
+        rootView = root
         setContentView(root)
+        window.insetsController?.setSystemBarsAppearance(
+            0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
+        worker.execute { loadApps() }
 
         shizukuWatch.scheduleWithFixedDelay({ shizukuTick() }, 0, 2, TimeUnit.SECONDS)
         Shizuku.addBinderReceivedListenerSticky(onBinder)
@@ -351,12 +391,34 @@ class MainActivity : Activity() {
                 val i = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
                 if (i != null) startActivity(i) else Native.log("ERR app Shizuku tidak ditemukan - pasang dari shizuku.rikka.app")
             }
-            "REFRESH" -> refresh()
-            "ROUTE" -> { routeIdx = p[1].toInt(); refresh() }
-            "CANCEL", "NET_CANCEL" -> Thread { try { svc?.cancel() } catch (_: Throwable) {} }.start()
-            "START" -> {
+            "CANCEL", "NET_CANCEL" -> {
+                synchronized(apkQueue) { apkQueue.clear() }
+                Thread { try { svc?.cancel() } catch (_: Throwable) {} }.start()
+            }
+            // file manager
+            "FM" -> fmAction(p[1], p.getOrNull(2))
+            // APK
+            "APK" -> apkAction(p[1], p.getOrNull(2))
+            "APK_GO" -> {
                 val idx = p[3].split(",").filter { it.isNotEmpty() }.map { it.toInt() }
-                worker.execute { startTransfer(p[1].toInt(), p[2] == "1", idx) }
+                val flags = p[2].toIntOrNull() ?: 0
+                worker.execute { apkBackup(p[1] == "1", flags and 1 != 0, flags and 2 != 0, idx) }
+            }
+            // pengaturan
+            "SET" -> setPref(p[1], p[2] == "1")
+            "SET_NAME" -> askText("Nama perangkat", "nama", false, myName) { v ->
+                if (v.isNotEmpty()) { myName = v.take(40); prefs.edit().putString("devName", myName).apply(); pushSettings() }
+            }
+            "TRASH_OPEN" -> { fmPath = trashDir; fmFilter = ""; worker.execute { try { svc?.mkdir(trashDir) } catch (_: Throwable) {}; fmLoad() }; Native.selectTab(0) }
+            "TRASH_EMPTY" -> confirm("Kosongkan tempat sampah?", "Semua isi dihapus permanen.", "Kosongkan") {
+                worker.execute {
+                    val s = svc ?: return@execute
+                    try {
+                        val kids = s.list(trashDir).mapNotNull { parseEntry(it) }.map { joinPath(trashDir, it.name) }
+                        if (kids.isEmpty()) Native.log("Tempat sampah sudah kosong")
+                        else { Native.setFmProgress(true, 0, kids.size.toLong(), 0.0, "Mengosongkan sampah..."); s.deletePaths(kids.toTypedArray(), "", fmCb) }
+                    } catch (t: Throwable) { Native.log("ERR sampah: ${t.message}") }
+                }
             }
             // jaringan
             "NET_PERM" -> netPerm()
@@ -405,8 +467,7 @@ class MainActivity : Activity() {
                 bPurpose = p[1].toInt()
                 browse(when (bPurpose) {
                     2 -> recvDir.ifEmpty { "/sdcard" }
-                    3 -> customSrc.ifEmpty { "/sdcard" }
-                    4 -> customDst.ifEmpty { "/sdcard" }
+                    5 -> xapkDir.ifEmpty { "/sdcard" }
                     else -> "/sdcard"
                 })
             }
@@ -462,8 +523,12 @@ class MainActivity : Activity() {
                 pushNetInfo()
                 Native.log("Folder penerimaan: $recvDir")
             }
-            3 -> { customSrc = bPath; Native.setCustom(customSrc, customDst); refresh() }
-            4 -> { customDst = bPath; Native.setCustom(customSrc, customDst) }
+            5 -> {
+                xapkDir = bPath
+                prefs.edit().putString("xapkDir", xapkDir).apply()
+                pushSettings()
+                Native.log("Folder hasil backup: $xapkDir")
+            }
         }
         closeBrowser()
     }
@@ -647,9 +712,10 @@ class MainActivity : Activity() {
         paneLoad(1)
     }
 
-    private fun askText(title: String, hint: String, numeric: Boolean, onOk: (String) -> Unit) = runOnUiThread {
+    private fun askText(title: String, hint: String, numeric: Boolean, initial: String = "", onOk: (String) -> Unit) = runOnUiThread {
         val et = EditText(this).apply {
             this.hint = hint
+            if (initial.isNotEmpty()) { setText(initial); setSelection(initial.length) }
             setSingleLine()
             if (numeric) inputType = InputType.TYPE_CLASS_NUMBER
         }
@@ -787,85 +853,346 @@ class MainActivity : Activity() {
         }
     }
 
-    // ================================================================ transfer lokal
-    private fun refresh() = worker.execute {
-        val my = routeIdx
-        val r = routes[my]
-        try {
-            if (r.kind == Kind.APK) {
-                val list = loadApks()
-                if (my != routeIdx) return@execute
-                apks = list
-                Native.setItems(list.map { "${it.label} (${it.pkg})" }.toTypedArray(),
-                    list.map { it.size }.toLongArray())
-            } else {
-                val src = if (my == customRoute) customSrc else r.src
-                val s = svc
-                if (s == null || src.isNullOrEmpty()) {
-                    dirs = emptyList()
-                    Native.setItems(emptyArray(), LongArray(0)); return@execute
-                }
-                val list = s.list(src).mapNotNull { parseEntry(it) }
-                if (my != routeIdx) return@execute
-                dirs = list
-                Native.setItems(list.map { (if (it.isDir) "[DIR] " else "") + it.name }.toTypedArray(),
-                    list.map { it.size }.toLongArray())
-            }
-        } catch (t: Throwable) {
-            Native.log("ERR gagal memuat daftar: ${t.message}")
+    // ================================================================ pengaturan
+    private fun loadSettings() {
+        dark = prefs.getBoolean("dark", false)
+        showHidden = prefs.getBoolean("hidden", false)
+        useTrash = prefs.getBoolean("trash", true)
+        xapkDir = prefs.getString("xapkDir", xapkDir) ?: xapkDir
+        myName = prefs.getString("devName", myName) ?: myName
+        pushSettings()
+        fmPublish()
+    }
+
+    private fun pushSettings() = Native.setSettings(dark, showHidden, useTrash, xapkDir, myName)
+
+    private fun setPref(key: String, v: Boolean) {
+        val e = prefs.edit()
+        when (key) {
+            "theme" -> { dark = v; e.putBoolean("dark", v) }
+            "hidden" -> { showHidden = v; e.putBoolean("hidden", v) }
+            "trash" -> { useTrash = v; e.putBoolean("trash", v) }
         }
+        e.apply()
+        pushSettings()
+        if (key == "hidden") fmPublish()
+    }
+
+    private fun confirm(title: String, msg: String, yes: String, onYes: () -> Unit) = runOnUiThread {
+        AlertDialog.Builder(this).setTitle(title).setMessage(msg)
+            .setPositiveButton(yes) { _, _ -> onYes() }
+            .setNegativeButton("Batal", null).show()
+    }
+
+    private fun fmt(b: Long): String {
+        var v = b.toDouble()
+        val u = arrayOf("B", "KB", "MB", "GB", "TB")
+        var i = 0
+        while (v >= 1024 && i < 4) { v /= 1024; i++ }
+        return if (i == 0) "${v.toLong()} B" else String.format("%.2f %s", v, u[i])
+    }
+
+    private fun safeName(n: String) = n.replace(Regex("[\\\\/:*?\"<>|\\r\\n]"), "_").trim().take(80).ifEmpty { "app" }
+
+    // ================================================================ file manager (tab Lokal)
+    private fun parseDetailed(line: String): DirEntry? {
+        val t = line.split("\t")
+        if (t.size < 4) return null
+        return DirEntry(t.dropLast(3).joinToString("\t"), t[t.size - 3].toLongOrNull() ?: 0,
+            t[t.size - 2] == "1", t.last().toLongOrNull() ?: 0)
+    }
+
+    private fun fmLoad() {
+        val v = fmVer.incrementAndGet()
+        val path = fmPath
+        paneIo.execute {
+            val s = svc
+            var err = ""
+            var list: List<DirEntry> = emptyList()
+            if (s == null) err = "Shizuku belum siap"
+            else try { list = s.listDetailed(path).mapNotNull { parseDetailed(it) } }
+            catch (t: Throwable) { err = t.message ?: "error" }
+            if (fmVer.get() != v) return@execute
+            fmRaw = list
+            fmError = err
+            fmPublish()
+        }
+    }
+
+    /** Terapkan filter tersembunyi, pencarian, dan urutan; hasilnya jadi acuan indeks aksi UI. */
+    private fun fmPublish() {
+        var l = fmRaw
+        if (!showHidden) l = l.filter { !it.name.startsWith(".") }
+        if (fmFilter.isNotEmpty()) l = l.filter { it.name.contains(fmFilter, ignoreCase = true) }
+        val byName = compareBy<DirEntry> { it.name.lowercase() }
+        val cmp: Comparator<DirEntry> = when (fmSort) {
+            1 -> compareBy<DirEntry> { it.size }.then(byName)
+            2 -> compareBy<DirEntry> { it.mtime }.then(byName)
+            3 -> compareBy<DirEntry> { it.name.substringAfterLast('.', "").lowercase() }.then(byName)
+            else -> byName
+        }
+        val sorted = l.sortedWith(compareBy<DirEntry> { !it.isDir }.then(if (fmAsc) cmp else cmp.reversed()))
+        fmView = sorted
+        Native.setFm(fmPath, fmError, fmFilter, fmSort, fmAsc,
+            sorted.map { it.name }.toTypedArray(),
+            sorted.map { it.size }.toLongArray(),
+            BooleanArray(sorted.size) { sorted[it].isDir },
+            sorted.map { it.mtime }.toLongArray())
+    }
+
+    private fun selected(arg: String?): List<DirEntry> =
+        (arg ?: "").split(",").filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull()?.let { i -> fmView.getOrNull(i) } }
+
+    private fun fmAction(op: String, arg: String?) {
+        when (op) {
+            "OPEN" -> fmView.getOrNull(arg?.toIntOrNull() ?: -1)?.takeIf { it.isDir }?.let {
+                fmPath = joinPath(fmPath, it.name); fmFilter = ""; fmLoad()
+            }
+            "UP" -> {
+                val parent = File(fmPath).parent
+                if (parent != null && parent != "/") { fmPath = parent; fmFilter = ""; fmLoad() }
+            }
+            "GO" -> if (!arg.isNullOrEmpty()) { fmPath = arg; fmFilter = ""; fmLoad() }
+            "REF" -> fmLoad()
+            "SORT" -> {
+                val k = arg?.toIntOrNull() ?: 0
+                if (k == fmSort) fmAsc = !fmAsc else { fmSort = k; fmAsc = true }
+                fmPublish()
+            }
+            "COPY", "CUT" -> {
+                val sel = selected(arg)
+                if (sel.isEmpty()) return
+                clip = sel.map { joinPath(fmPath, it.name) }
+                clipCut = op == "CUT"
+                Native.setClip(clip.size, clipCut)
+                Native.log("Clipboard: ${clip.size} item (${if (clipCut) "potong" else "salin"})")
+            }
+            "PASTE" -> worker.execute { paste() }
+            "DEL" -> deleteItems(selected(arg))
+            "REN" -> renameItem(selected(arg).firstOrNull())
+            "NEW" -> askText("Folder baru", "nama folder", false) { name ->
+                if (name.isNotEmpty() && !name.contains('/')) worker.execute {
+                    try { svc?.mkdir(joinPath(fmPath, name)) } catch (_: Throwable) {}
+                    fmLoad()
+                }
+            }
+            "PROP" -> showProps(selected(arg))
+            "SEND" -> {
+                val sel = selected(arg)
+                for (e in sel) { val p = joinPath(fmPath, e.name); if (p !in sendList) sendList.add(p) }
+                publishSendList()
+                if (paired == null) Native.log("${sel.size} item masuk daftar kirim - pairing dulu di tab Wi-Fi")
+                else Native.log("${sel.size} item masuk daftar kirim")
+                Native.selectTab(1)
+            }
+            "FIND" -> askText("Cari di folder ini", "nama berisi...", false, fmFilter) { v -> fmFilter = v; fmPublish() }
+            "FINDX" -> { fmFilter = ""; fmPublish() }
+        }
+    }
+
+    private fun fmFail(msg: String) {
+        Native.log("ERR    $msg")
+        Native.setFmProgress(false, 0, 0, 0.0, "")
+    }
+
+    private fun paste() {
+        val s = svc ?: return fmFail("Shizuku belum siap")
+        if (clip.isEmpty()) return
+        val dstDir = fmPath
+        val used = fmRaw.map { it.name }.toMutableSet()
+        val srcs = ArrayList<String>()
+        val dsts = ArrayList<String>()
+        for (src in clip) {
+            val name = File(src).name
+            if (dstDir == src || dstDir.startsWith("$src/")) return fmFail("Tidak bisa menempel folder ke dalam dirinya sendiri: $name")
+            if (clipCut && File(src).parent == dstDir) { Native.log("Lewati $name: sudah di folder ini"); continue }
+            srcs += src
+            dsts += joinPath(dstDir, uniqueName(name, used))
+        }
+        if (srcs.isEmpty()) return
+        val cut = clipCut
+        Native.setFmProgress(true, 0, 0, 0.0, "Menyiapkan...")
+        Native.log("${if (cut) "Pindah" else "Salin"} ${srcs.size} item ke $dstDir")
+        try {
+            s.start(srcs.toTypedArray(), dsts.toTypedArray(), cut, fmCb)
+            if (cut) { clip = emptyList(); Native.setClip(0, false) }
+        } catch (t: Throwable) { fmFail("gagal memulai: ${t.message}") }
+    }
+
+    private fun deleteItems(sel: List<DirEntry>) {
+        if (sel.isEmpty()) return
+        val paths = sel.map { joinPath(fmPath, it.name) }
+        val permanent = !useTrash || paths.any {
+            it.startsWith("/sdcard/Android/data") || it.startsWith("/sdcard/Android/obb") || it.startsWith(trashDir)
+        }
+        val what = if (sel.size == 1) "\"${sel[0].name}\"" else "${sel.size} item"
+        confirm("Hapus $what?",
+            if (permanent) "Dihapus permanen dan tidak bisa dikembalikan."
+            else "Dipindahkan ke tempat sampah ($trashDir).", "Hapus") {
+            worker.execute {
+                val s = svc ?: return@execute fmFail("Shizuku belum siap")
+                Native.setFmProgress(true, 0, paths.size.toLong(), 0.0, "Menghapus...")
+                try { s.deletePaths(paths.toTypedArray(), if (useTrash) trashDir else "", fmCb) }
+                catch (t: Throwable) { fmFail("gagal menghapus: ${t.message}") }
+            }
+        }
+    }
+
+    private fun renameItem(e: DirEntry?) {
+        if (e == null) return
+        askText("Ubah nama", "nama baru", false, e.name) { v ->
+            if (v.isEmpty() || v.contains('/') || v == e.name) return@askText
+            worker.execute {
+                val ok = try { svc?.rename(joinPath(fmPath, e.name), joinPath(fmPath, v)) ?: false } catch (_: Throwable) { false }
+                Native.log(if (ok) "OK     ${e.name} -> $v" else "ERR    gagal mengubah nama (nama sudah ada?)")
+                fmLoad()
+            }
+        }
+    }
+
+    private fun showProps(sel: List<DirEntry>) {
+        if (sel.isEmpty()) return
+        worker.execute {
+            val s = svc ?: return@execute
+            val msg = StringBuilder()
+            try {
+                if (sel.size == 1) {
+                    val e = sel[0]
+                    val full = joinPath(fmPath, e.name)
+                    val size = if (e.isDir) s.pathSize(full) else e.size
+                    msg.append("Nama: ${e.name}\n")
+                    msg.append("Lokasi: $fmPath\n")
+                    msg.append("Jenis: ${if (e.isDir) "Folder" else "File ${e.name.substringAfterLast('.', "").uppercase()}".trim()}\n")
+                    msg.append("Ukuran: ${fmt(size)} ($size byte)\n")
+                    if (e.mtime > 0) msg.append("Diubah: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(e.mtime))}")
+                } else {
+                    val total = sel.sumOf { if (it.isDir) s.pathSize(joinPath(fmPath, it.name)) else it.size }
+                    msg.append("${sel.size} item (${sel.count { it.isDir }} folder)\nLokasi: $fmPath\nTotal ukuran: ${fmt(total)}")
+                }
+            } catch (t: Throwable) { msg.append("Gagal membaca properti: ${t.message}") }
+            runOnUiThread { AlertDialog.Builder(this).setTitle("Properti").setMessage(msg.toString()).setPositiveButton("OK", null).show() }
+        }
+    }
+
+    // ================================================================ APK / XAPK
+    @Suppress("DEPRECATION")
+    private fun loadApps() {
+        val pm = packageManager
+        val list = pm.getInstalledApplications(0).map { ai ->
+            val paths = listOf(ai.sourceDir) + (ai.splitSourceDirs?.toList() ?: emptyList())
+            val pi = try { pm.getPackageInfo(ai.packageName, 0) } catch (_: Throwable) { null }
+            ApkEntry(pm.getApplicationLabel(ai).toString(), ai.packageName, pi?.versionName ?: "0",
+                pi?.longVersionCode ?: 0L, paths, paths.sumOf { File(it).length() },
+                ai.flags and ApplicationInfo.FLAG_SYSTEM != 0, ai.minSdkVersion, ai.targetSdkVersion)
+        }.sortedBy { it.label.lowercase() }
+        allApps = list
+        applyApps()
+    }
+
+    private fun applyApps() {
+        val f = apkFilter
+        val v = allApps.filter { (apkSystem || !it.system) &&
+                (f.isEmpty() || it.label.contains(f, true) || it.pkg.contains(f, true)) }
+        apkView = v
+        Native.setApps(f, v.map { it.label }.toTypedArray(),
+            v.map { "${it.pkg}  v${it.ver}  ${fmt(it.size)}" }.toTypedArray(),
+            v.map { it.size }.toLongArray())
+    }
+
+    private fun apkAction(op: String, arg: String?) {
+        when (op) {
+            "FIND" -> askText("Cari aplikasi", "nama atau paket", false, apkFilter) { v -> apkFilter = v; worker.execute { applyApps() } }
+            "FINDX" -> { apkFilter = ""; worker.execute { applyApps() } }
+            "SYS" -> { apkSystem = arg == "1"; worker.execute { applyApps() } }
+            "REF", "OPEN" -> worker.execute { loadApps() }
+        }
+    }
+
+    private fun apkFail(msg: String) {
+        Native.log("ERR    $msg")
+        Native.setApkProgress(false, 0, 0, 0.0, "")
+    }
+
+    private fun apkBackup(xapk: Boolean, withObb: Boolean, withData: Boolean, idx: List<Int>) {
+        val s = svc ?: return apkFail("Shizuku belum siap")
+        val sel = idx.mapNotNull { apkView.getOrNull(it) }
+        if (sel.isEmpty()) return apkFail("Tidak ada aplikasi terpilih")
+        try {
+            if (!xapk) {
+                val srcs = ArrayList<String>(); val dsts = ArrayList<String>()
+                for (e in sel) for (path in e.paths) {
+                    srcs += path
+                    dsts += "$xapkDir/${e.pkg}_${safeName(e.ver)}/${File(path).name}"
+                }
+                Native.log("Backup APK: ${sel.size} aplikasi (${srcs.size} file) ke $xapkDir")
+                s.start(srcs.toTypedArray(), dsts.toTypedArray(), false, apkCb)
+            } else {
+                Native.log("Backup XAPK: ${sel.size} aplikasi${if (withObb) " (+OBB)" else ""}${if (withData) " (+DATA)" else ""} ke $xapkDir")
+                val jobs = sel.map { buildXapkJob(it, withObb, withData) }
+                synchronized(apkQueue) { apkQueue.clear(); apkQueue.addAll(jobs) }
+                sendNextApkChunk()
+            }
+        } catch (t: Throwable) { apkFail("gagal memulai: ${t.message}") }
+    }
+
+    /** Kirim job dalam potongan kecil supaya transaksi Binder tidak melewati batas ~1 MB. */
+    private fun sendNextApkChunk() {
+        val s = svc ?: return apkFail("Shizuku belum siap")
+        val chunk = synchronized(apkQueue) {
+            val l = ArrayList<String>()
+            while (l.size < 15 && apkQueue.isNotEmpty()) l.add(apkQueue.removeFirst())
+            l
+        }
+        if (chunk.isEmpty()) return
+        Native.setApkProgress(true, 0, 0, 0.0, "Menyiapkan...")
+        try { s.backupXapk(chunk.toTypedArray(), apkCb) } catch (t: Throwable) { apkFail("gagal memulai: ${t.message}") }
     }
 
     @Suppress("DEPRECATION")
-    private fun loadApks(): List<ApkEntry> {
+    private fun buildXapkJob(e: ApkEntry, withObb: Boolean, withData: Boolean): String {
         val pm = packageManager
-        return pm.getInstalledApplications(0)
-            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
-            .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
-            .map { ai ->
-                val paths = listOf(ai.sourceDir) + (ai.splitSourceDirs?.toList() ?: emptyList())
-                val ver = try { pm.getPackageInfo(ai.packageName, 0).versionName ?: "0" } catch (_: Throwable) { "0" }
-                ApkEntry(pm.getApplicationLabel(ai).toString(), ai.packageName,
-                    ver.replace(Regex("[^A-Za-z0-9._-]"), "_"), paths, paths.sumOf { File(it).length() })
-            }
+        val perms = try { pm.getPackageInfo(e.pkg, PackageManager.GET_PERMISSIONS).requestedPermissions?.toList() } catch (_: Throwable) { null } ?: emptyList()
+        val splitApks = JSONArray()
+        val splitIds = JSONArray()
+        val apks = JSONArray()
+        e.paths.forEachIndexed { i, path ->
+            val fileName = File(path).name
+            val entry = if (i == 0) "${e.pkg}.apk" else fileName
+            val id = if (i == 0) "base" else fileName.removePrefix("split_").removeSuffix(".apk")
+            apks.put(JSONObject().put("path", path).put("entry", entry))
+            splitApks.put(JSONObject().put("file", entry).put("id", id))
+            if (i > 0) splitIds.put(id)
+        }
+        val manifest = JSONObject()
+            .put("xapk_version", 2)
+            .put("package_name", e.pkg)
+            .put("name", e.label)
+            .put("version_code", e.verCode.toString())
+            .put("version_name", e.ver)
+            .put("min_sdk_version", e.minSdk.toString())
+            .put("target_sdk_version", e.targetSdk.toString())
+            .put("permissions", JSONArray(perms))
+            .put("icon", "icon.png")
+            .put("split_configs", splitIds)
+            .put("split_apks", splitApks)
+        return JSONObject()
+            .put("out", "$xapkDir/${safeName(e.label)}_${safeName(e.ver)}.xapk")
+            .put("obb", withObb)
+            .put("data", withData)
+            .put("icon_b64", iconB64(e.pkg))
+            .put("manifest", manifest)
+            .put("apks", apks)
+            .toString()
     }
 
-    private fun startTransfer(routeI: Int, move: Boolean, idx: List<Int>) {
-        val s = svc
-        if (s == null) {
-            Native.log("ERR Shizuku belum siap")
-            Native.setProgress(false, 0, 0, 0.0, ""); return
-        }
-        val r = routes[routeI]
-        val srcBase = if (routeI == customRoute) customSrc else r.src
-        val dstBase = if (routeI == customRoute) customDst else r.dst
-        if (r.kind == Kind.DIR && (srcBase.isNullOrEmpty() || dstBase.isEmpty())) {
-            Native.log("ERR sumber/tujuan belum dipilih")
-            Native.setProgress(false, 0, 0, 0.0, ""); return
-        }
-        val srcs = ArrayList<String>()
-        val dsts = ArrayList<String>()
-        try {
-            if (r.kind == Kind.APK) {
-                for (i in idx) {
-                    val e = apks[i]
-                    for (path in e.paths) {
-                        srcs += path
-                        dsts += "$dstBase/${e.pkg}_${e.ver}/${File(path).name}"
-                    }
-                }
-            } else {
-                for (i in idx) {
-                    val e = dirs[i]
-                    srcs += "$srcBase/${e.name}"
-                    dsts += "$dstBase/${e.name}"
-                }
-            }
-            Native.log("Mulai: ${r.name} (${srcs.size} item, ${if (move) "pindah" else "salin"})")
-            s.start(srcs.toTypedArray(), dsts.toTypedArray(), move, cb)
-        } catch (t: Throwable) {
-            Native.log("ERR gagal memulai: ${t.message}")
-            Native.setProgress(false, 0, 0, 0.0, "")
-        }
-    }
+    private fun iconB64(pkg: String): String = try {
+        val sz = 128
+        val dr = packageManager.getApplicationIcon(pkg)
+        val bmp = Bitmap.createBitmap(sz, sz, Bitmap.Config.ARGB_8888)
+        dr.setBounds(0, 0, sz, sz)
+        dr.draw(Canvas(bmp))
+        val bos = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, bos)
+        Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+    } catch (_: Throwable) { "" }
 }

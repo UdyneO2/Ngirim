@@ -20,4 +20,11 @@ interface IFileService {
     void push(String host, int port, String pin, String deviceName, in String[] srcs, String remoteDir, IProgressCallback cb) = 11;
     void pull(String host, int port, String pin, String deviceName, in String[] remotePaths, String destDir, IProgressCallback cb) = 12;
     void setAllowBrowse(boolean allow) = 13;             // penerima: izinkan perangkat terpasang menjelajah /sdcard
+    // File manager
+    String[] listDetailed(String dir) = 14;              // "nama\tukuran\tdir\tmtime(ms)"; ukuran folder = 0
+    void deletePaths(in String[] paths, String trashDir, IProgressCallback cb) = 15; // trashDir kosong = hapus permanen
+    boolean rename(String from, String to) = 16;
+    long pathSize(String path) = 17;                     // rekursif
+    // Backup XAPK: tiap elemen = satu job JSON (lihat FileService.doXapk)
+    void backupXapk(in String[] jobs, IProgressCallback cb) = 18;
 }

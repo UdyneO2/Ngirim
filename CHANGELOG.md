@@ -1,5 +1,20 @@
 # Changelog Ngirim
 
+## v2.0 - 2026-11-09
+
+### Baru
+- **UI bergaya Windows 10**: kontrol datar, aksen biru #0078D7, ikon file/folder, tema Terang (default) dan Gelap
+- **Tab Lokal menjadi file manager**: salin, potong, tempel, hapus (tempat sampah), ganti nama, folder baru,
+  properti, urutkan, cari, file tersembunyi, dan akses cepat ke folder (bisa disematkan)
+- **Backup APK ke XAPK** lewat tombol di tab Lokal: pemilih aplikasi, manifest XAPK, split APK, OBB opsional,
+  DATA game opsional; atau APK + split dalam folder
+- **Tab Pengaturan** menggantikan Changelog; riwayat perubahan dipindah ke bagian bawah Pengaturan
+- Terminal menjadi **tab Log**, diletakkan setelah Pengaturan (urutan tab: Lokal, Wi-Fi, FTP, Pengaturan, Log)
+
+### Berubah
+- Rute lama (Foto DCIM, backup/restore OBB dan DATA, Kustom) diganti file manager dan akses cepat
+- Folder hasil XAPK dapat diubah di Pengaturan (default `/sdcard/Ngirim/XAPK`)
+
 ## v1.0 - 2026-11-08 (rilis final)
 
 Menggabungkan semua fitur v1.1-beta dan v1.2-beta, ditambah:
