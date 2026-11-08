@@ -19,11 +19,18 @@ object Native {
 
     // jaringan
     @JvmStatic external fun setNetPerm(ok: Boolean, msg: String)
-    @JvmStatic external fun setNetStep(step: Int)
     @JvmStatic external fun setPeers(names: Array<String>)
     @JvmStatic external fun setNetInfo(addr: String, pin: String, recvDir: String, listening: Boolean, paired: String)
     @JvmStatic external fun setSendList(names: Array<String>, sizes: LongArray)
     @JvmStatic external fun setNetProgress(busy: Boolean, done: Long, total: Long, speed: Double, cur: String)
+
+    // FTP (dua panel)
+    @JvmStatic external fun setPane(
+        idx: Int, path: String, remote: Boolean, err: String,
+        names: Array<String>, sizes: LongArray, dirs: BooleanArray
+    )
+    @JvmStatic external fun setBookmarks(paths: Array<String>)
+    @JvmStatic external fun setFtpProgress(busy: Boolean, done: Long, total: Long, speed: Double, cur: String)
 
     // file browser
     @JvmStatic external fun setBrowser(

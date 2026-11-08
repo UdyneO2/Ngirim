@@ -4,13 +4,15 @@ Aplikasi Android untuk transfer file, APK, foto, dan data game (`/sdcard/Android
 `/sdcard/Android/data`), lokal maupun ke perangkat lain lewat Wi-Fi yang sama.
 Akses file memakai **Shizuku** (tanpa root, tanpa SAF), UI memakai **Dear ImGui** (OpenGL ES 3).
 
-Versi saat ini: **v1.1 Beta** (lihat [CHANGELOG.md](CHANGELOG.md)).
+Versi saat ini: **v1.2 Beta** (lihat [CHANGELOG.md](CHANGELOG.md)).
 
 ## Fitur
 
 - **Lokal**: backup/restore APK (termasuk split APK), foto, OBB dan DATA game, plus rute **Kustom**
   (pilih folder sumber dan tujuan sendiri). Mode Salin atau Pindah.
 - **Wi-Fi (antar perangkat)**: kirim/terima file dan **folder** lewat jaringan yang sama.
+- **FTP (dua panel)**: tab FTP menampilkan dua folder berdampingan dengan pintasan folder; panel kanan bisa
+  diarahkan ke perangkat lain yang sudah dipairing untuk menjelajah, mengambil, dan mengirim file dua arah.
 - **File browser bawaan**: pilih file atau folder di mana saja, termasuk `Android/data` dan `Android/obb`,
   buat folder baru, dan tentukan folder penyimpanan penerima.
 - **Live progress**: persen, ukuran, kecepatan, ETA, dan file yang sedang diproses.
@@ -34,18 +36,23 @@ Versi saat ini: **v1.1 Beta** (lihat [CHANGELOG.md](CHANGELOG.md)).
 Hasil backup tersimpan di `/sdcard/Ngirim/{APK,Foto,obb,data}`.
 
 ### Transfer lewat Wi-Fi (tab Wi-Fi)
-1. **Izin**: ketuk *Berikan izin / periksa ulang* (izin perangkat sekitar, dan membuka pengaturan Wi-Fi
-   bila belum terhubung). Lanjut setelah semua OK.
-2. **Pilih peran**: *Kirim* atau *Terima*.
-3. **Perangkat penerima**: ketuk *Pilih folder tujuan*, lalu **MULAI TERIMA**. Layar menampilkan
-   alamat `IP:port` dan **PIN 6 digit**.
-4. **Perangkat pengirim**: ketuk *Cari perangkat* (atau *IP manual* dan isi `IP:port`), pilih penerima,
-   masukkan PIN (pairing).
-5. Tambahkan file/folder lewat *+ File / folder* (bisa dari banyak lokasi), lalu **KIRIM SEKARANG**.
-   Progress dan log terminal tampil di kedua perangkat.
+1. **Izin**: bila status belum hijau, ketuk *Berikan izin / periksa ulang*.
+2. **Perangkat penerima**: nyalakan saklar **Terima**. Perangkat langsung terlihat aktif oleh perangkat lain;
+   layar menampilkan `IP:port` dan **PIN 6 digit**. Folder simpan default `/sdcard/Ngirim/Terima` (bisa diubah).
+3. **Perangkat pengirim**: bagian *Perangkat aktif* terisi otomatis (ketuk *Segarkan* atau *IP manual* bila
+   perlu). Ketuk perangkat, masukkan PIN (pairing).
+4. Tambahkan file/folder lewat *+ File / folder*, lalu **KIRIM SEKARANG**.
 
 Folder dikirim lengkap beserta isi dan subfolder. Jika nama file sudah ada di penerima, file baru
 disimpan dengan akhiran ` (1)`, ` (2)`, dan seterusnya (tidak menimpa).
+
+### FTP dua panel (tab FTP)
+1. Pilih panel (ketuk di dalamnya), lalu ketuk pintasan folder, *Naik*, atau ketuk folder untuk masuk.
+   *Simpan pintasan* menambah folder saat ini ke daftar pintasan favorit.
+2. Panel kanan: pilih *HP ini* atau nama perangkat yang sudah dipairing.
+3. Centang item di satu panel, lalu **Kiri >> Kanan** atau **Kiri << Kanan**. Salin/Pindah berlaku untuk
+   dua panel lokal; ke/dari perangkat lain hanya salin.
+4. Agar perangkat lain bisa menjelajah, di perangkat itu nyalakan Terima **dan** *Izinkan jelajah FTP*.
 
 ## Keamanan
 
@@ -53,20 +60,23 @@ disimpan dengan akhiran ` (1)`, ` (2)`, dan seterusnya (tidak menimpa).
   nonce acak dari penerima.
 - Penerima berhenti otomatis setelah 5 kali PIN salah.
 - Path dari pengirim divalidasi (tidak boleh `..`, absolut, atau keluar dari folder tujuan).
+- Jelajah FTP dari perangkat lain hanya aktif bila saklar *Izinkan jelajah FTP* menyala, dibatasi ke `/sdcard`
+  (termasuk `Android/data` dan `Android/obb`), dan tetap butuh PIN. Nyalakan hanya untuk perangkat yang dipercaya.
 - **Data tidak dienkripsi** selama transfer; gunakan hanya di jaringan yang dipercaya.
 
 ## Protokol singkat
 
 TCP, port acak (diumumkan lewat mDNS `_ngirim._tcp` dan ditampilkan di layar).
-Server mengirim `MAGIC "NGR1" + versi + nonce + nama`; klien membalas `mode + nama + HMAC`;
-setelah itu manifest (`jumlah, total, [path, isDir, ukuran]*`), konfirmasi penerima, aliran isi file
+Server mengirim `MAGIC "NGR1" + versi (2) + nonce + nama`; klien membalas `mode + nama + HMAC`.
+Mode: 1 cek PIN, 2 kirim ke folder terima, 3 daftar folder, 4 ambil (pull), 5 kirim ke folder pilihan (push).
+Untuk mode 2/5 (dan 4 dengan arah terbalik), manifest (`jumlah, total, [path, isDir, ukuran]*`), konfirmasi penerima, aliran isi file
 berurutan, lalu ACK akhir. Seluruh jaringan dan file I/O berjalan di proses Shizuku (uid shell).
 
 ## Troubleshooting
 
 | Masalah | Solusi |
 |---|---|
-| Perangkat tidak muncul saat *Cari* | Pastikan penerima sudah *MULAI TERIMA*, satu Wi-Fi, dan pakai *IP manual* |
+| Perangkat tidak muncul di *Perangkat aktif* | Pastikan saklar Terima di penerima menyala, satu Wi-Fi, dan pakai *IP manual* |
 | Tetap tidak terhubung | Matikan *AP/Client isolation* di router, atau pakai hotspot salah satu HP |
 | `Shizuku belum berjalan` | Start Shizuku lewat app Shizuku, lalu ketuk *Hubungkan Shizuku* |
 | Daftar `Android/data` kosong | Pastikan izin Shizuku diberikan ke Ngirim |
@@ -93,7 +103,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v1.1-beta && git push origin v1.1-beta` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v1.2-beta && git push origin v1.2-beta` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.

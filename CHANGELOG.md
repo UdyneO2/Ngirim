@@ -1,5 +1,19 @@
 # Changelog Ngirim
 
+## v1.2-beta - 2026-11-08
+
+### Baru
+- **Tab FTP**: dua panel berdampingan (kiri HP ini, kanan HP ini atau perangkat yang sudah dipairing), pintasan folder bawaan (Internal, Download, DCIM, Pictures, Data, OBB, Ngirim) dan pintasan favorit sendiri
+- Salin/pindah antar panel; ke/dari perangkat lain lewat Wi-Fi (jelajah folder jarak jauh, unduh, unggah ke folder pilihan)
+- **Saklar Terima ON/OFF** di tab Wi-Fi (folder simpan default `/sdcard/Ngirim/Terima`)
+- **Perangkat aktif** tampil otomatis tanpa menekan Cari; perangkat yang mati hilang sendiri
+- Saklar "Izinkan jelajah FTP ke /sdcard" di penerima (default mati)
+- Protokol jaringan v2 (mode LIST, PULL, PUSH); v1.1 dan v1.2 tidak saling kompatibel
+
+### Perbaikan
+- Tab Wi-Fi, FTP, Terminal, dan Changelog tidak bisa di-tap (ImGui butuh satu frame hover sebelum tekan)
+- Server penerima melayani koneksi paralel; pengecekan perangkat aktif tidak lagi memunculkan error
+
 ## v1.1-beta - 2026-11-08
 
 ### Baru

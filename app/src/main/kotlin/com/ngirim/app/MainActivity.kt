@@ -28,8 +28,13 @@ import rikka.shizuku.Shizuku
 import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.security.SecureRandom
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
@@ -39,7 +44,15 @@ class MainActivity : Activity() {
     private class Route(val name: String, val kind: Kind, val src: String?, val dst: String)
     private class ApkEntry(val label: String, val pkg: String, val ver: String, val paths: List<String>, val size: Long)
     private class DirEntry(val name: String, val size: Long, val isDir: Boolean)
-    private class Peer(val name: String, val host: String, val port: Int)
+    private class Peer(val name: String, val host: String, val port: Int, val svc: String?) {
+        @Volatile var misses = 0
+    }
+    private class Pane(var path: String, var remote: Boolean) {
+        @Volatile var entries: List<DirEntry> = emptyList()
+        val ver = AtomicInteger()
+        var localPath = path
+        var remotePath = "/sdcard"
+    }
 
     private val base = "/sdcard/Ngirim"
     private val customRoute = 6 // sinkron dengan kCustomRoute di native-lib.cpp
@@ -56,6 +69,10 @@ class MainActivity : Activity() {
     private val reqShizuku = 1001
     private val reqNearby = 2001
     private val worker = Executors.newSingleThreadExecutor()
+    private val paneIo = Executors.newCachedThreadPool()
+    private val probeExec = Executors.newSingleThreadScheduledExecutor()
+    private var probeJob: ScheduledFuture<*>? = null
+    private val prefs by lazy { getSharedPreferences("ngirim", MODE_PRIVATE) }
     private val myName: String = Build.MODEL ?: "Android"
 
     @Volatile private var svc: IFileService? = null
@@ -70,7 +87,14 @@ class MainActivity : Activity() {
     @Volatile private var paired: Peer? = null
     @Volatile private var pairedPin = ""
     private val sendList = ArrayList<String>()
-    @Volatile private var recvDir = ""
+    @Volatile private var recvDir = "/sdcard/Ngirim/Terima"
+    @Volatile private var allowBrowse = false
+    @Volatile private var netReady = false
+    @Volatile private var myPort = -1
+
+    // FTP
+    private val panes = arrayOf(Pane("/sdcard", false), Pane("/sdcard/Download", false))
+    private val bookmarks = ArrayList<String>()
 
     // browser
     @Volatile private var bPurpose = 0
@@ -82,7 +106,7 @@ class MainActivity : Activity() {
     private var surfH = 1
 
     private val nsdh by lazy {
-        NsdHelper(this, { n, h, p -> onPeerFound(n, h, p) }, { Native.log(it) })
+        NsdHelper(this, { n, h, p -> onPeerFound(n, h, p, n) }, { onPeerLost(it) }, { Native.log(it) })
     }
 
     private val userArgs by lazy {
@@ -99,11 +123,15 @@ class MainActivity : Activity() {
             svc = IFileService.Stub.asInterface(binder)
             Native.setShizuku(true, "Shizuku terhubung")
             Native.log("OK     service Shizuku aktif")
+            try { svc?.setAllowBrowse(allowBrowse) } catch (_: Throwable) {}
             refresh()
+            paneLoad(0); paneLoad(1)
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             svc = null
             Native.setShizuku(false, "Service terputus")
+            myPort = -1; curAddr = ""; curPin = ""
+            pushNetInfo()
         }
     }
 
@@ -139,8 +167,21 @@ class MainActivity : Activity() {
             Native.log((if (ok) "OK     " else "ERR    ") + message)
             if (message.startsWith("Server dihentikan")) {
                 nsdh.unregister()
-                Native.setNetInfo("", "", recvDir, false, "")
+                myPort = -1; curAddr = ""; curPin = ""
+                pushNetInfo()
             }
+        }
+    }
+
+    private val ftpCb = object : IProgressCallback.Stub() {
+        override fun onProgress(current: String, done: Long, total: Long, bytesPerSec: Double) {
+            Native.setFtpProgress(true, done, total, bytesPerSec, current)
+        }
+        override fun onLog(msg: String) { Native.log(msg) }
+        override fun onFinish(ok: Boolean, message: String, done: Long, total: Long) {
+            Native.setFtpProgress(false, done, total, 0.0, "")
+            Native.log((if (ok) "OK     " else "ERR    ") + message)
+            paneLoad(0); paneLoad(1)
         }
     }
 
@@ -151,6 +192,9 @@ class MainActivity : Activity() {
         Native.setRoutes(routes.map { it.name }.toTypedArray())
         Native.setShizuku(false, "Menunggu Shizuku...")
         Native.log("Ngirim v${BuildConfig.VERSION_NAME} siap")
+        bookmarks.addAll((prefs.getString("bookmarks", "") ?: "").split("\n").filter { it.isNotEmpty() })
+        Native.setBookmarks(bookmarks.toTypedArray())
+        pushNetInfo()
 
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
@@ -206,10 +250,18 @@ class MainActivity : Activity() {
         checkNetPerm()
     }
 
-    override fun onResume() { super.onResume(); glView.onResume(); checkNetPerm() }
-    override fun onPause() { glView.onPause(); super.onPause() }
+    override fun onResume() {
+        super.onResume(); glView.onResume(); checkNetPerm()
+        probeJob = probeExec.scheduleWithFixedDelay({ probePeers() }, 5, 5, TimeUnit.SECONDS)
+    }
+    override fun onPause() {
+        probeJob?.cancel(false); probeJob = null
+        nsdh.stopDiscovery()
+        glView.onPause(); super.onPause()
+    }
 
     override fun onDestroy() {
+        probeExec.shutdownNow(); paneIo.shutdownNow()
         nsdh.stopDiscovery(); nsdh.unregister()
         try { svc?.stopListen() } catch (_: Throwable) {}
         Shizuku.removeBinderReceivedListener(onBinder)
@@ -246,7 +298,7 @@ class MainActivity : Activity() {
 
     // ================================================================ aksi dari UI ImGui
     private fun handle(a: String) {
-        val p = a.split("|")
+        val p = a.split("|", limit = 4)
         when (p[0]) {
             "CONNECT" -> worker.execute { connect() }
             "REFRESH" -> refresh()
@@ -258,20 +310,46 @@ class MainActivity : Activity() {
             }
             // jaringan
             "NET_PERM" -> netPerm()
-            "NET_ROLE" -> if (p[1] == "send") { peers.clear(); publishPeers() }
-            "NET_SCAN" -> { Native.log("Mencari perangkat di Wi-Fi yang sama..."); nsdh.startDiscovery() }
+            "NET_SCAN" -> { synchronized(peers) { peers.removeAll { it.svc != null } }; publishPeers(); nsdh.startDiscovery() }
             "NET_MANUAL" -> askText("Alamat penerima", "contoh 192.168.1.5:45123", false) { v ->
                 val i = v.lastIndexOf(':')
                 val port = if (i > 0) v.substring(i + 1).toIntOrNull() else null
                 if (port == null) Native.log("ERR format harus IP:port")
-                else onPeerFound("Manual", v.substring(0, i), port)
+                else onPeerFound("Manual", v.substring(0, i), port, null)
             }
             "NET_PAIR" -> pair(p[1].toInt())
             "NET_CLEAR" -> { sendList.clear() }
             "NET_SEND" -> worker.execute { sendNow() }
             "NET_LISTEN" -> worker.execute { listenNow() }
             "NET_STOP" -> worker.execute { stopListenNow() }
-            "NET_RESET" -> worker.execute { netReset() }
+            "NET_DISCONNECT" -> disconnectPeer()
+            "RX_ON" -> worker.execute { listenNow() }
+            "RX_OFF" -> worker.execute { stopListenNow() }
+            "RX_BROWSE" -> {
+                allowBrowse = p[1] == "1"
+                try { svc?.setAllowBrowse(allowBrowse) } catch (_: Throwable) {}
+            }
+            // FTP
+            "FP" -> paneAction(p[1].toInt(), p[2], p.getOrNull(3))
+            "FP_XFER" -> {
+                val idx = p[3].split(",").filter { it.isNotEmpty() }.map { it.toInt() }
+                worker.execute { ftpTransfer(p[1].toInt(), p[2] == "1", idx) }
+            }
+            "FP_MKDIR" -> {
+                val i = p[1].toInt()
+                askText("Nama folder baru", "nama folder", false) { name ->
+                    if (name.isNotEmpty() && !name.contains('/')) paneIo.execute {
+                        try { svc?.mkdir(File(panes[i].path, name).path) } catch (_: Throwable) {}
+                        paneLoad(i)
+                    }
+                }
+            }
+            "BM" -> {
+                val path = a.substringAfter("|")
+                if (!bookmarks.remove(path)) bookmarks.add(path)
+                prefs.edit().putString("bookmarks", bookmarks.joinToString("\n")).apply()
+                Native.setBookmarks(bookmarks.toTypedArray())
+            }
             // file browser
             "BPURPOSE" -> {
                 bPurpose = p[1].toInt()
@@ -331,7 +409,7 @@ class MainActivity : Activity() {
         when (bPurpose) {
             2 -> {
                 recvDir = bPath
-                Native.setNetInfo("", "", recvDir, false, "")
+                pushNetInfo()
                 Native.log("Folder penerimaan: $recvDir")
             }
             3 -> { customSrc = bPath; Native.setCustom(customSrc, customDst); refresh() }
@@ -386,7 +464,9 @@ class MainActivity : Activity() {
                 checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
         val msg = "Wi-Fi: " + (if (ip != null) "terhubung ($ip)" else "TIDAK terhubung") +
                 "\nIzin perangkat sekitar: " + (if (nearby) "OK" else "belum diberikan")
-        Native.setNetPerm(ip != null && nearby, msg)
+        netReady = ip != null && nearby
+        Native.setNetPerm(netReady, msg)
+        ensureDiscovery()
     }
 
     private fun netPerm() = runOnUiThread {
@@ -399,10 +479,19 @@ class MainActivity : Activity() {
         checkNetPerm()
     }
 
-    private fun onPeerFound(name: String, host: String, port: Int) {
+    private fun display(n: String) = n.removePrefix("Ngirim-")
+
+    private fun onPeerFound(name: String, host: String, port: Int, svcName: String?) {
+        if (port == myPort && host == localIp()) return // diri sendiri
         synchronized(peers) {
-            if (peers.none { it.host == host && it.port == port }) peers.add(Peer(name, host, port))
+            val old = peers.firstOrNull { it.host == host && it.port == port }
+            if (old == null) peers.add(Peer(display(name), host, port, svcName)) else old.misses = 0
         }
+        publishPeers()
+    }
+
+    private fun onPeerLost(svcName: String) {
+        synchronized(peers) { peers.removeAll { it.svc == svcName } }
         publishPeers()
     }
 
@@ -410,6 +499,34 @@ class MainActivity : Activity() {
         val names = synchronized(peers) { peers.map { "${it.name}  (${it.host}:${it.port})" } }
         Native.setPeers(names.toTypedArray())
     }
+
+    /** Cek berkala: perangkat yang tidak lagi menjawab di port-nya dibuang dari daftar aktif. */
+    private fun probePeers() {
+        val snapshot = synchronized(peers) { peers.filter { it.svc != null } }
+        var changed = false
+        for (p in snapshot) {
+            val alive = try {
+                Socket().use { s ->
+                    s.connect(InetSocketAddress(p.host, p.port), 1500)
+                    s.soTimeout = 1500
+                    s.getInputStream().read() >= 0
+                }
+            } catch (_: Throwable) { false }
+            if (alive) p.misses = 0
+            else if (++p.misses >= 2) { synchronized(peers) { peers.remove(p) }; changed = true }
+        }
+        if (changed) publishPeers()
+    }
+
+    private fun ensureDiscovery() {
+        if (netReady && !nsdh.isDiscovering) nsdh.startDiscovery()
+    }
+
+    @Volatile private var curAddr = ""
+    @Volatile private var curPin = ""
+    private val listeningNow get() = myPort > 0
+
+    private fun pushNetInfo() = Native.setNetInfo(curAddr, curPin, recvDir, listeningNow, paired?.name ?: "")
 
     private fun pair(i: Int) {
         val peer = synchronized(peers) { peers.getOrNull(i) } ?: return
@@ -420,10 +537,8 @@ class MainActivity : Activity() {
                 val err = try { s.checkPair(peer.host, peer.port, pin, myName) } catch (t: Throwable) { t.message ?: "error" }
                 if (err.isEmpty()) {
                     paired = peer; pairedPin = pin
-                    nsdh.stopDiscovery()
-                    Native.setNetInfo("", "", recvDir, false, peer.name)
+                    pushNetInfo()
                     Native.log("OK     pairing dengan ${peer.name} (${peer.host}:${peer.port})")
-                    Native.setNetStep(3)
                 } else {
                     Native.log("ERR pairing gagal: $err")
                 }
@@ -455,8 +570,10 @@ class MainActivity : Activity() {
             val port = s.listen(recvDir, pin, myName, netCb)
             if (port < 0) return
             val ip = localIp() ?: "?"
+            myPort = port
+            curAddr = "$ip:$port"; curPin = pin
             nsdh.register("Ngirim-$myName", port)
-            Native.setNetInfo("$ip:$port", pin, recvDir, true, "")
+            pushNetInfo()
             Native.log("Menunggu pengirim di $ip:$port - PIN $pin")
         } catch (t: Throwable) {
             Native.log("ERR listen: ${t.message}")
@@ -466,16 +583,18 @@ class MainActivity : Activity() {
     private fun stopListenNow() {
         try { svc?.stopListen() } catch (_: Throwable) {}
         nsdh.unregister()
-        Native.setNetInfo("", "", recvDir, false, "")
+        myPort = -1; curAddr = ""; curPin = ""
+        pushNetInfo()
         Native.setNetProgress(false, 0, 0, 0.0, "")
     }
 
-    private fun netReset() {
-        nsdh.stopDiscovery()
-        stopListenNow()
+    private fun disconnectPeer() {
         paired = null; pairedPin = ""
-        synchronized(peers) { peers.clear() }
-        publishPeers()
+        sendList.clear(); publishSendList()
+        pushNetInfo()
+        panes[1].remote = false
+        panes[1].path = panes[1].localPath
+        paneLoad(1)
     }
 
     private fun askText(title: String, hint: String, numeric: Boolean, onOk: (String) -> Unit) = runOnUiThread {
@@ -494,6 +613,128 @@ class MainActivity : Activity() {
             .setPositiveButton("OK") { _, _ -> onOk(et.text.toString().trim()) }
             .setNegativeButton("Batal", null)
             .show()
+    }
+
+
+    // ================================================================ FTP (dua panel)
+    private fun joinPath(dir: String, name: String) = if (dir.endsWith("/")) dir + name else "$dir/$name"
+
+    private fun paneLoad(i: Int) {
+        val p = panes[i]
+        val v = p.ver.incrementAndGet()
+        val path = p.path
+        val remote = p.remote
+        paneIo.execute {
+            val s = svc
+            val peer = paired
+            val pin = pairedPin
+            var err = ""
+            var list: List<DirEntry> = emptyList()
+            try {
+                if (remote) {
+                    if (s == null || peer == null) err = "Belum terhubung ke perangkat lain"
+                    else {
+                        val r = s.remoteList(peer.host, peer.port, pin, myName, path)
+                        if (r.isNotEmpty() && r[0] == "OK") list = r.drop(1).mapNotNull { parseEntry(it) }
+                        else err = r.firstOrNull() ?: "Gagal memuat"
+                    }
+                } else if (s == null) {
+                    err = "Shizuku belum siap"
+                } else {
+                    list = s.browse(path).mapNotNull { parseEntry(it) }
+                }
+            } catch (t: Throwable) { err = t.message ?: "error" }
+            if (p.ver.get() != v) return@execute
+            p.entries = list
+            Native.setPane(i, path, remote, err,
+                list.map { it.name }.toTypedArray(),
+                list.map { it.size }.toLongArray(),
+                BooleanArray(list.size) { list[it].isDir })
+        }
+    }
+
+    private fun paneAction(i: Int, op: String, arg: String?) {
+        val p = panes[i]
+        when (op) {
+            "OPEN" -> p.entries.getOrNull(arg?.toIntOrNull() ?: -1)?.takeIf { it.isDir }?.let {
+                p.path = joinPath(p.path, it.name); paneLoad(i)
+            }
+            "UP" -> {
+                val parent = File(p.path).parent
+                if (parent != null && parent != "/" && !(p.remote && !(parent == "/sdcard" || parent.startsWith("/sdcard/")))) {
+                    p.path = parent; paneLoad(i)
+                }
+            }
+            "GO" -> if (!arg.isNullOrEmpty()) { p.path = arg; paneLoad(i) }
+            "REF" -> paneLoad(i)
+            "SRC" -> if (i == 1) {
+                val toRemote = arg == "1" && paired != null
+                if (toRemote == p.remote) return
+                if (p.remote) p.remotePath = p.path else p.localPath = p.path
+                p.remote = toRemote
+                p.path = if (toRemote) p.remotePath else p.localPath
+                paneLoad(1)
+            }
+        }
+    }
+
+    private fun uniqueName(name: String, used: MutableSet<String>): String {
+        var n = name
+        if (n in used) {
+            val dot = name.lastIndexOf('.')
+            val base = if (dot > 0) name.substring(0, dot) else name
+            val ext = if (dot > 0) name.substring(dot) else ""
+            var k = 1
+            while ("$base ($k)$ext" in used) k++
+            n = "$base ($k)$ext"
+        }
+        used.add(n)
+        return n
+    }
+
+    private fun ftpFail(msg: String) {
+        Native.log("ERR    $msg")
+        Native.setFtpProgress(false, 0, 0, 0.0, "")
+    }
+
+    private fun ftpTransfer(from: Int, move: Boolean, idx: List<Int>) {
+        val s = svc ?: return ftpFail("Shizuku belum siap")
+        val src = panes[from]
+        val dst = panes[1 - from]
+        val names = idx.mapNotNull { src.entries.getOrNull(it)?.name }
+        if (names.isEmpty()) return ftpFail("Tidak ada item terpilih")
+        val peer = paired
+        try {
+            when {
+                !src.remote && !dst.remote -> {
+                    val used = dst.entries.map { it.name }.toMutableSet()
+                    val srcs = ArrayList<String>(); val dsts = ArrayList<String>()
+                    for (n in names) {
+                        val full = joinPath(src.path, n)
+                        if (dst.path == full || dst.path.startsWith("$full/"))
+                            return ftpFail("Tidak bisa menyalin folder ke dalam dirinya sendiri: $n")
+                        if (move && src.path == dst.path) return ftpFail("Sumber dan tujuan sama")
+                        srcs += full
+                        dsts += joinPath(dst.path, if (move) n else uniqueName(n, used))
+                    }
+                    Native.log("Mulai: ${srcs.size} item, ${if (move) "pindah" else "salin"} ke ${dst.path}")
+                    s.start(srcs.toTypedArray(), dsts.toTypedArray(), move, ftpCb)
+                }
+                peer == null -> ftpFail("Belum terhubung ke perangkat lain")
+                !src.remote -> {
+                    Native.log("Kirim ${names.size} item ke ${peer.name}:${dst.path}")
+                    s.push(peer.host, peer.port, pairedPin, myName,
+                        names.map { joinPath(src.path, it) }.toTypedArray(), dst.path, ftpCb)
+                }
+                else -> {
+                    Native.log("Ambil ${names.size} item dari ${peer.name} ke ${dst.path}")
+                    s.pull(peer.host, peer.port, pairedPin, myName,
+                        names.map { joinPath(src.path, it) }.toTypedArray(), dst.path, ftpCb)
+                }
+            }
+        } catch (t: Throwable) {
+            ftpFail("gagal memulai: ${t.message}")
+        }
     }
 
     // ================================================================ transfer lokal

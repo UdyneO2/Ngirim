@@ -15,6 +15,8 @@ import java.net.Socket
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.system.exitProcess
@@ -27,13 +29,16 @@ class FileService : IFileService.Stub() {
 
     companion object {
         private const val MAGIC = 0x4E475231 // "NGR1"
+        private const val VERSION = 2
         private const val MAX_PIN_FAILS = 5
     }
 
     @Volatile private var cancelled = false
     @Volatile private var running = false
     @Volatile private var server: ServerSocket? = null
-    @Volatile private var pinFails = 0
+    private val pinFails = AtomicInteger(0)
+    @Volatile private var allowBrowse = false
+    private val transferLock = ReentrantLock()
     private val active = Collections.synchronizedSet(HashSet<Socket>())
 
     override fun destroy() { stopListen(); exitProcess(0) }
@@ -115,7 +120,7 @@ class FileService : IFileService.Stub() {
         finish(cb, !cancelled && failed == 0, msg, job.done, total)
     }
 
-    // ---------------------------------------------------------------- jaringan: terima
+    // ---------------------------------------------------------------- jaringan: server
     override fun listen(destDir: String, pin: String, deviceName: String, cb: IProgressCallback): Int {
         stopListen()
         return try {
@@ -124,7 +129,7 @@ class FileService : IFileService.Stub() {
             if (!root.isDirectory) throw IOException("Folder tujuan tidak valid")
             val ss = ServerSocket(0)
             server = ss
-            pinFails = 0
+            pinFails.set(0)
             Thread { acceptLoop(ss, root, pin, deviceName, cb) }.start()
             ss.localPort
         } catch (t: Throwable) {
@@ -139,57 +144,142 @@ class FileService : IFileService.Stub() {
         closeActive()
     }
 
+    override fun setAllowBrowse(allow: Boolean) { allowBrowse = allow }
+
     private fun acceptLoop(ss: ServerSocket, root: File, pin: String, name: String, cb: IProgressCallback) {
         log(cb, "Server terima aktif di port ${ss.localPort}, simpan ke ${root.path}")
         while (!ss.isClosed) {
             val s = try { ss.accept() } catch (_: Exception) { break }
             active.add(s)
-            try {
-                incoming(s, root, pin, name, cb)
-            } catch (e: Throwable) {
-                if (cancelled) { log(cb, "ERR sesi dibatalkan"); finish(cb, false, "Sesi dibatalkan", 0, 0) }
-                else { log(cb, "ERR sesi: ${e.message}"); finish(cb, false, "Sesi gagal: ${e.message}", 0, 0) }
-            } finally {
-                active.remove(s)
-                try { s.close() } catch (_: Exception) {}
-            }
+            // satu thread per koneksi: jelajah folder tidak menunggu transfer yang sedang berjalan
+            Thread {
+                try { incoming(s, root, pin, name, cb) }
+                catch (_: Throwable) {}
+                finally {
+                    active.remove(s)
+                    try { s.close() } catch (_: Exception) {}
+                }
+            }.start()
         }
         log(cb, "Server terima berhenti")
     }
 
     private class Ent(val rel: String, val dir: Boolean, val size: Long)
+    private class Hello(val mode: Int, val peer: String, val mac: ByteArray)
+    private class Outcome(val ok: Boolean, val msg: String, val done: Long, val total: Long)
+
+    private fun reply(out: DataOutputStream, ok: Boolean, msg: String) {
+        out.writeByte(if (ok) 1 else 0); out.writeUTF(msg); out.flush()
+    }
 
     private fun incoming(s: Socket, root: File, pin: String, name: String, cb: IProgressCallback) {
-        cancelled = false
         s.soTimeout = 60_000
         val inp = DataInputStream(BufferedInputStream(s.getInputStream(), 1 shl 16))
         val out = DataOutputStream(BufferedOutputStream(s.getOutputStream(), 1 shl 16))
 
         val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
-        out.writeInt(MAGIC); out.writeByte(1); out.write(nonce); out.writeUTF(name); out.flush()
+        try {
+            out.writeInt(MAGIC); out.writeByte(VERSION); out.write(nonce); out.writeUTF(name); out.flush()
+        } catch (_: IOException) { return }
 
-        val mode = inp.readByte().toInt()
-        val peer = inp.readUTF()
-        val mac = ByteArray(32)
-        inp.readFully(mac)
-        val shown = peer.take(64)
+        // Koneksi yang diputus sebelum autentikasi (mis. pengecekan "perangkat aktif") diabaikan diam-diam
+        val hello = try {
+            val m = inp.readByte().toInt()
+            val p = inp.readUTF()
+            val mac = ByteArray(32)
+            inp.readFully(mac)
+            Hello(m, p, mac)
+        } catch (_: IOException) { return }
+
+        val mode = hello.mode
+        val shown = hello.peer.take(64)
         val from = s.inetAddress?.hostAddress ?: "?"
 
-        if (!MessageDigest.isEqual(mac, hmac(pin, nonce, mode, peer))) {
-            out.writeByte(0); out.writeUTF("PIN salah"); out.flush()
+        if (!MessageDigest.isEqual(hello.mac, hmac(pin, nonce, mode, hello.peer))) {
+            reply(out, false, "PIN salah")
             log(cb, "ERR PIN salah dari $shown ($from)")
-            if (++pinFails >= MAX_PIN_FAILS) {
+            if (pinFails.incrementAndGet() >= MAX_PIN_FAILS) {
                 stopListen()
                 finish(cb, false, "Server dihentikan: terlalu banyak PIN salah", 0, 0)
             }
             return
         }
-        pinFails = 0
-        out.writeByte(1); out.writeUTF("OK"); out.flush()
-        if (mode == 1) { log(cb, "OK     pairing dengan $shown ($from)"); return }
-        if (mode != 2) return
+        pinFails.set(0)
+        reply(out, true, "OK")
 
-        log(cb, "Pengirim terhubung: $shown ($from)")
+        when (mode) {
+            1 -> log(cb, "OK     pairing dengan $shown ($from)")
+            2 -> {
+                log(cb, "Pengirim terhubung: $shown ($from)")
+                serverTransfer(out, cb) { receiveSession(inp, out, root, shown, cb) }
+            }
+            3 -> {
+                try { serveList(inp, out) }
+                catch (e: Throwable) { log(cb, "ERR jelajah dari $shown: ${e.message}") }
+            }
+            4 -> {
+                val paths = try { readPaths(inp) } catch (e: Throwable) { return }
+                if (!allowBrowse) { reply(out, false, "Akses jelajah dimatikan di perangkat penerima"); return }
+                val files = try { paths.map { resolveRemote(it) } }
+                catch (e: SecurityException) { reply(out, false, "Path ditolak"); log(cb, "ERR ${e.message}"); return }
+                reply(out, true, "OK")
+                log(cb, "$shown mengambil ${files.size} item")
+                serverTransfer(out, cb) { sendSession(inp, out, files, cb, shown) }
+            }
+            5 -> {
+                val destStr = try { inp.readUTF() } catch (e: Throwable) { return }
+                if (!allowBrowse) { reply(out, false, "Akses jelajah dimatikan di perangkat penerima"); return }
+                val dest = try { resolveRemote(destStr) }
+                catch (e: SecurityException) { reply(out, false, "Path ditolak"); log(cb, "ERR ${e.message}"); return }
+                dest.mkdirs()
+                if (!dest.isDirectory) { reply(out, false, "Folder tujuan tidak valid"); return }
+                reply(out, true, "OK")
+                log(cb, "$shown mengirim ke ${dest.path}")
+                serverTransfer(out, cb) { receiveSession(inp, out, dest, shown, cb) }
+            }
+        }
+    }
+
+    /** Hanya satu transfer pada satu waktu di sisi server; hasilnya dilaporkan ke UI. */
+    private fun serverTransfer(out: DataOutputStream, cb: IProgressCallback, block: () -> Outcome) {
+        if (!transferLock.tryLock()) { try { reply(out, false, "Perangkat sedang sibuk") } catch (_: Throwable) {}; return }
+        try {
+            cancelled = false
+            val r = block()
+            finish(cb, r.ok, r.msg, r.done, r.total)
+        } catch (e: Throwable) {
+            if (cancelled) { log(cb, "ERR sesi dibatalkan"); finish(cb, false, "Sesi dibatalkan", 0, 0) }
+            else { log(cb, "ERR sesi: ${e.message}"); finish(cb, false, "Sesi gagal: ${e.message}", 0, 0) }
+        } finally {
+            transferLock.unlock()
+        }
+    }
+
+    private fun readPaths(inp: DataInputStream): List<String> {
+        val n = inp.readInt()
+        if (n < 0 || n > 10_000) throw IOException("Daftar tidak valid")
+        return List(n) { inp.readUTF() }
+    }
+
+    private fun serveList(inp: DataInputStream, out: DataOutputStream) {
+        val path = inp.readUTF()
+        if (!allowBrowse) { reply(out, false, "Akses jelajah dimatikan di perangkat penerima"); return }
+        val dir = try { resolveRemote(path) } catch (e: SecurityException) { reply(out, false, "Path ditolak"); return }
+        if (!dir.isDirectory) { reply(out, false, "Bukan folder"); return }
+        val kids = (dir.listFiles() ?: emptyArray())
+            .sortedWith(compareBy<File>({ !it.isDirectory }, { it.name.lowercase() }))
+        reply(out, true, "OK")
+        out.writeInt(kids.size)
+        for (k in kids) {
+            out.writeUTF(k.name)
+            out.writeLong(if (k.isFile) k.length() else 0L)
+            out.writeByte(if (k.isDirectory) 1 else 0)
+        }
+        out.flush()
+    }
+
+    // Sisi penerima isi: baca manifest, simpan ke root, balas ACK.
+    private fun receiveSession(inp: DataInputStream, out: DataOutputStream, root: File, label: String, cb: IProgressCallback): Outcome {
         val count = inp.readInt()
         val total = inp.readLong()
         if (count < 0 || count > 2_000_000 || total < 0) throw IOException("Manifest tidak valid")
@@ -199,16 +289,14 @@ class FileService : IFileService.Stub() {
         val targets = try {
             list.map { safeResolve(root, it.rel) }
         } catch (e: SecurityException) {
-            out.writeByte(0); out.writeUTF("Path ditolak"); out.flush()
-            log(cb, "ERR ${e.message}")
-            return
+            reply(out, false, "Path ditolak")
+            return Outcome(false, "Path ditolak: ${e.message}", 0, total)
         }
         if (root.usableSpace < total) {
-            out.writeByte(0); out.writeUTF("Ruang penyimpanan tidak cukup"); out.flush()
-            log(cb, "ERR ruang tidak cukup (butuh ${fmt(total)})")
-            return
+            reply(out, false, "Ruang penyimpanan tidak cukup")
+            return Outcome(false, "Ruang tidak cukup (butuh ${fmt(total)})", 0, total)
         }
-        out.writeByte(1); out.writeUTF("SIAP"); out.flush()
+        reply(out, true, "SIAP")
         log(cb, "Menerima ${list.size} entri (${fmt(total)})")
 
         val job = Job(cb, total)
@@ -240,37 +328,12 @@ class FileService : IFileService.Stub() {
         }
         job.emit("", force = true)
         out.writeByte(1); out.flush()
-        finish(cb, true, "Selesai: $files file diterima dari $shown (${fmt(job.done)})", job.done, total)
-    }
-
-    // ---------------------------------------------------------------- jaringan: kirim
-    override fun checkPair(host: String, port: Int, pin: String, deviceName: String): String = try {
-        Socket().use { s ->
-            s.connect(InetSocketAddress(host, port), 5000)
-            s.soTimeout = 8000
-            handshake(DataInputStream(s.getInputStream()), DataOutputStream(s.getOutputStream()), 1, pin, deviceName)
-        }
-        ""
-    } catch (t: Throwable) {
-        t.message ?: t.javaClass.simpleName
-    }
-
-    override fun send(host: String, port: Int, pin: String, deviceName: String, srcs: Array<String>, cb: IProgressCallback) {
-        if (running) { cb.onFinish(false, "Transfer lain masih berjalan", 0, 0); return }
-        cancelled = false
-        running = true
-        Thread {
-            try { doSend(host, port, pin, deviceName, srcs, cb) }
-            catch (t: Throwable) {
-                if (cancelled) { log(cb, "ERR dibatalkan"); finish(cb, false, "Dibatalkan", 0, 0) }
-                else { log(cb, "ERR ${t.message}"); finish(cb, false, "Gagal: ${t.message}", 0, 0) }
-            } finally { running = false }
-        }.start()
+        return Outcome(true, "Selesai: $files file diterima dari $label (${fmt(job.done)})", job.done, total)
     }
 
     private class SendEnt(val rel: String, val f: File, val dir: Boolean, val size: Long)
 
-    private fun doSend(host: String, port: Int, pin: String, name: String, srcs: Array<String>, cb: IProgressCallback) {
+    private fun buildManifest(srcs: List<File>): List<SendEnt> {
         val list = ArrayList<SendEnt>()
         fun walk(rel: String, f: File) {
             if (f.isDirectory) {
@@ -280,59 +343,154 @@ class FileService : IFileService.Stub() {
                 list.add(SendEnt(rel, f, false, f.length()))
             }
         }
-        for (p in srcs) { val f = File(p); walk(f.name, f) }
+        for (f in srcs) walk(f.name, f)
+        return list
+    }
+
+    // Sisi pengirim isi: tulis manifest, tunggu SIAP, alirkan file, tunggu ACK.
+    private fun sendSession(inp: DataInputStream, out: DataOutputStream, srcs: List<File>, cb: IProgressCallback, label: String): Outcome {
+        val list = buildManifest(srcs)
         val total = list.sumOf { it.size }
         val fileCount = list.count { !it.dir }
         log(cb, "Menyiapkan ${list.size} entri ($fileCount file, ${fmt(total)})")
 
+        out.writeInt(list.size); out.writeLong(total)
+        for (e in list) { out.writeUTF(e.rel); out.writeByte(if (e.dir) 1 else 0); out.writeLong(e.size) }
+        out.flush()
+        if (inp.readByte().toInt() != 1) throw IOException("Ditolak penerima: ${inp.readUTF()}")
+        inp.readUTF()
+
+        val job = Job(cb, total)
+        for (e in list) {
+            if (e.dir) continue
+            FileInputStream(e.f).use { i ->
+                var left = e.size
+                while (left > 0) {
+                    val n = i.read(job.buf, 0, minOf(left, job.buf.size.toLong()).toInt())
+                    if (n < 0) throw EOFException("File berubah saat dikirim: ${e.rel}")
+                    out.write(job.buf, 0, n)
+                    left -= n
+                    job.done += n
+                    job.emit(e.rel)
+                    if (cancelled) throw InterruptedException("cancel")
+                }
+            }
+            log(cb, "OK     ${e.rel}")
+        }
+        out.flush()
+        if (inp.readByte().toInt() != 1) throw IOException("Penerima gagal menyimpan")
+        job.emit("", force = true)
+        return Outcome(true, "Selesai: $fileCount file terkirim ke $label (${fmt(job.done)})", job.done, total)
+    }
+
+    // ---------------------------------------------------------------- jaringan: klien
+    private class Conn(val s: Socket, val inp: DataInputStream, val out: DataOutputStream, val peerName: String)
+
+    private fun <T> withConn(host: String, port: Int, mode: Int, pin: String, name: String,
+                             connectMs: Int, readMs: Int, block: (Conn) -> T): T {
         val s = Socket()
         active.add(s)
         try {
-            s.connect(InetSocketAddress(host, port), 8000)
-            s.soTimeout = 60_000
+            s.connect(InetSocketAddress(host, port), connectMs)
+            s.soTimeout = readMs
             val inp = DataInputStream(BufferedInputStream(s.getInputStream(), 1 shl 16))
             val out = DataOutputStream(BufferedOutputStream(s.getOutputStream(), 1 shl 16))
-
-            val serverName = handshake(inp, out, 2, pin, name)
-            log(cb, "OK     terautentikasi ke $serverName")
-
-            out.writeInt(list.size); out.writeLong(total)
-            for (e in list) { out.writeUTF(e.rel); out.writeByte(if (e.dir) 1 else 0); out.writeLong(e.size) }
-            out.flush()
-            if (inp.readByte().toInt() != 1) throw IOException("Ditolak penerima: ${inp.readUTF()}")
-            inp.readUTF()
-
-            val job = Job(cb, total)
-            for (e in list) {
-                if (e.dir) continue
-                FileInputStream(e.f).use { i ->
-                    var left = e.size
-                    while (left > 0) {
-                        val n = i.read(job.buf, 0, minOf(left, job.buf.size.toLong()).toInt())
-                        if (n < 0) throw EOFException("File berubah saat dikirim: ${e.rel}")
-                        out.write(job.buf, 0, n)
-                        left -= n
-                        job.done += n
-                        job.emit(e.rel)
-                        if (cancelled) throw InterruptedException("cancel")
-                    }
-                }
-                log(cb, "OK     ${e.rel}")
-            }
-            out.flush()
-            if (inp.readByte().toInt() != 1) throw IOException("Penerima gagal menyimpan")
-            job.emit("", force = true)
-            finish(cb, true, "Selesai: $fileCount file terkirim ke $serverName (${fmt(job.done)})", job.done, total)
+            val peerName = handshake(inp, out, mode, pin, name)
+            return block(Conn(s, inp, out, peerName))
         } finally {
             active.remove(s)
             try { s.close() } catch (_: Exception) {}
         }
     }
 
+    override fun checkPair(host: String, port: Int, pin: String, deviceName: String): String = try {
+        withConn(host, port, 1, pin, deviceName, 5000, 8000) { }
+        ""
+    } catch (t: Throwable) {
+        t.message ?: t.javaClass.simpleName
+    }
+
+    override fun remoteList(host: String, port: Int, pin: String, deviceName: String, path: String): Array<String> {
+        return try {
+            withConn(host, port, 3, pin, deviceName, 5000, 15_000) { c ->
+                c.out.writeUTF(path); c.out.flush()
+                if (c.inp.readByte().toInt() != 1) {
+                    arrayOf(c.inp.readUTF())
+                } else {
+                    c.inp.readUTF()
+                    val n = c.inp.readInt()
+                    if (n < 0 || n > 200_000) throw IOException("Daftar tidak valid")
+                    val res = ArrayList<String>(n + 1)
+                    res.add("OK")
+                    repeat(n) {
+                        val nm = c.inp.readUTF()
+                        val sz = c.inp.readLong()
+                        val d = c.inp.readByte().toInt()
+                        res.add("$nm\t$sz\t$d")
+                    }
+                    res.toTypedArray()
+                }
+            }
+        } catch (t: Throwable) {
+            arrayOf(t.message ?: t.javaClass.simpleName)
+        }
+    }
+
+    private fun startClient(cb: IProgressCallback, block: () -> Unit) {
+        if (running) { cb.onFinish(false, "Transfer lain masih berjalan", 0, 0); return }
+        cancelled = false
+        running = true
+        Thread {
+            try { block() }
+            catch (t: Throwable) {
+                if (cancelled) { log(cb, "ERR dibatalkan"); finish(cb, false, "Dibatalkan", 0, 0) }
+                else { log(cb, "ERR ${t.message}"); finish(cb, false, "Gagal: ${t.message}", 0, 0) }
+            } finally { running = false }
+        }.start()
+    }
+
+    override fun send(host: String, port: Int, pin: String, deviceName: String, srcs: Array<String>, cb: IProgressCallback) =
+        startClient(cb) { doSend(host, port, pin, deviceName, srcs, null, cb) }
+
+    override fun push(host: String, port: Int, pin: String, deviceName: String, srcs: Array<String>,
+                      remoteDir: String, cb: IProgressCallback) =
+        startClient(cb) { doSend(host, port, pin, deviceName, srcs, remoteDir, cb) }
+
+    /** remoteDir == null: kirim ke folder terima (mode 2); selain itu ke folder pilihan di perangkat lain (mode 5). */
+    private fun doSend(host: String, port: Int, pin: String, name: String, srcs: Array<String>, remoteDir: String?, cb: IProgressCallback) {
+        withConn(host, port, if (remoteDir == null) 2 else 5, pin, name, 8000, 60_000) { c ->
+            log(cb, "OK     terautentikasi ke ${c.peerName}")
+            if (remoteDir != null) {
+                c.out.writeUTF(remoteDir); c.out.flush()
+                if (c.inp.readByte().toInt() != 1) throw IOException("Ditolak penerima: ${c.inp.readUTF()}")
+                c.inp.readUTF()
+            }
+            val r = sendSession(c.inp, c.out, srcs.map { File(it) }, cb, c.peerName)
+            finish(cb, r.ok, r.msg, r.done, r.total)
+        }
+    }
+
+    override fun pull(host: String, port: Int, pin: String, deviceName: String, remotePaths: Array<String>,
+                      destDir: String, cb: IProgressCallback) = startClient(cb) {
+        withConn(host, port, 4, pin, deviceName, 8000, 60_000) { c ->
+            log(cb, "OK     terautentikasi ke ${c.peerName}")
+            c.out.writeInt(remotePaths.size)
+            remotePaths.forEach { c.out.writeUTF(it) }
+            c.out.flush()
+            if (c.inp.readByte().toInt() != 1) throw IOException("Ditolak: ${c.inp.readUTF()}")
+            c.inp.readUTF()
+            val dest = File(destDir)
+            dest.mkdirs()
+            if (!dest.isDirectory) throw IOException("Folder tujuan tidak valid")
+            val r = receiveSession(c.inp, c.out, dest, c.peerName, cb)
+            finish(cb, r.ok, r.msg, r.done, r.total)
+        }
+    }
+
     // ---------------------------------------------------------------- util
     private fun handshake(inp: DataInputStream, out: DataOutputStream, mode: Int, pin: String, name: String): String {
         if (inp.readInt() != MAGIC) throw IOException("Bukan server Ngirim")
-        if (inp.readByte().toInt() != 1) throw IOException("Versi protokol berbeda")
+        if (inp.readByte().toInt() != VERSION) throw IOException("Versi protokol berbeda - perbarui Ngirim di kedua perangkat")
         val nonce = ByteArray(16)
         inp.readFully(nonce)
         val serverName = inp.readUTF()
@@ -349,6 +507,15 @@ class FileService : IFileService.Stub() {
         m.update(mode.toByte())
         m.update(peer.toByteArray())
         return m.doFinal()
+    }
+
+    /** Akses jarak jauh dibatasi ke /sdcard (path kanonik, jadi ".." dan symlink tidak bisa keluar). */
+    private fun resolveRemote(p: String): File {
+        if (!p.startsWith("/")) throw SecurityException("path harus absolut: $p")
+        val root = File("/sdcard").canonicalFile.path
+        val f = File(p).canonicalFile
+        if (f.path != root && !f.path.startsWith("$root/")) throw SecurityException("akses di luar /sdcard ditolak: $p")
+        return f
     }
 
     private fun safeResolve(root: File, rel: String): File {

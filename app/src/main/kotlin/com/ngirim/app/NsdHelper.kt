@@ -9,6 +9,7 @@ import java.net.Inet4Address
 class NsdHelper(
     ctx: Context,
     private val onFound: (name: String, host: String, port: Int) -> Unit,
+    private val onLost: (name: String) -> Unit,
     private val log: (String) -> Unit
 ) {
     private val nsd = ctx.getSystemService(Context.NSD_SERVICE) as NsdManager
@@ -42,6 +43,8 @@ class NsdHelper(
         selfName = ""
     }
 
+    val isDiscovering: Boolean get() = disc != null
+
     fun startDiscovery() {
         stopDiscovery()
         val l = object : NsdManager.DiscoveryListener {
@@ -50,7 +53,7 @@ class NsdHelper(
             override fun onDiscoveryStarted(t: String) {}
             override fun onDiscoveryStopped(t: String) {}
             override fun onServiceFound(s: NsdServiceInfo) { if (s.serviceName != selfName) enqueue(s) }
-            override fun onServiceLost(s: NsdServiceInfo) {}
+            override fun onServiceLost(s: NsdServiceInfo) { onLost(s.serviceName) }
         }
         disc = l
         try { nsd.discoverServices(type, NsdManager.PROTOCOL_DNS_SD, l) } catch (t: Throwable) { log("ERR NSD: ${t.message}") }
