@@ -16,6 +16,7 @@ import android.opengl.GLSurfaceView
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.InputType
 import android.view.MotionEvent
@@ -109,18 +110,25 @@ class MainActivity : Activity() {
         NsdHelper(this, { n, h, p -> onPeerFound(n, h, p, n) }, { onPeerLost(it) }, { Native.log(it) })
     }
 
-    private val userArgs by lazy {
+    private fun makeArgs(suffix: String) =
         Shizuku.UserServiceArgs(ComponentName(packageName, FileService::class.java.name))
             .daemon(false)
-            .processNameSuffix("fs")
+            .processNameSuffix(suffix)
             .debuggable(BuildConfig.DEBUG)
             .version(BuildConfig.VERSION_CODE)
-    }
+
+    // Watchdog koneksi Shizuku (cadangan bila event binder/izin tidak datang)
+    private val shizukuWatch = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var curArgs: Shizuku.UserServiceArgs? = null
+    @Volatile private var bindingSince = 0L
+    @Volatile private var bindAttempts = 0
+    @Volatile private var permAskedAt = 0L
 
     private val conn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             if (binder == null || !binder.pingBinder()) return
             svc = IFileService.Stub.asInterface(binder)
+            bindingSince = 0L; bindAttempts = 0
             Native.setShizuku(true, "Shizuku terhubung")
             Native.log("OK     service Shizuku aktif")
             try { svc?.setAllowBrowse(allowBrowse) } catch (_: Throwable) {}
@@ -129,20 +137,22 @@ class MainActivity : Activity() {
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             svc = null
-            Native.setShizuku(false, "Service terputus")
+            bindingSince = 0L
+            Native.setShizuku(false, "Service terputus - menyambung ulang...")
             myPort = -1; curAddr = ""; curPin = ""
             pushNetInfo()
         }
     }
 
-    private val onBinder = Shizuku.OnBinderReceivedListener { worker.execute { connect() } }
+    private val onBinder = Shizuku.OnBinderReceivedListener { shizukuWatch.execute { shizukuTick() } }
     private val onDead = Shizuku.OnBinderDeadListener {
         svc = null
-        Native.setShizuku(false, "Shizuku berhenti")
+        bindingSince = 0L
+        Native.setShizuku(false, "Shizuku berhenti - start lagi lewat app Shizuku")
     }
     private val onPerm = Shizuku.OnRequestPermissionResultListener { _, result ->
-        if (result == PackageManager.PERMISSION_GRANTED) worker.execute { bind() }
-        else Native.setShizuku(false, "Izin Shizuku ditolak")
+        if (result == PackageManager.PERMISSION_GRANTED) bindingSince = 0L
+        shizukuWatch.execute { shizukuTick() }
     }
 
     private val cb = object : IProgressCallback.Stub() {
@@ -244,6 +254,7 @@ class MainActivity : Activity() {
         }
         setContentView(root)
 
+        shizukuWatch.scheduleWithFixedDelay({ shizukuTick() }, 0, 2, TimeUnit.SECONDS)
         Shizuku.addBinderReceivedListenerSticky(onBinder)
         Shizuku.addBinderDeadListener(onDead)
         Shizuku.addRequestPermissionResultListener(onPerm)
@@ -267,7 +278,8 @@ class MainActivity : Activity() {
         Shizuku.removeBinderReceivedListener(onBinder)
         Shizuku.removeBinderDeadListener(onDead)
         Shizuku.removeRequestPermissionResultListener(onPerm)
-        try { Shizuku.unbindUserService(userArgs, conn, true) } catch (_: Throwable) {}
+        shizukuWatch.shutdownNow()
+        curArgs?.let { try { Shizuku.unbindUserService(it, conn, true) } catch (_: Throwable) {} }
         super.onDestroy()
     }
 
@@ -277,22 +289,53 @@ class MainActivity : Activity() {
     }
 
     // ================================================================ Shizuku
-    private fun connect() {
-        if (!Shizuku.pingBinder()) {
-            Native.setShizuku(false, "Shizuku belum berjalan - start dulu lewat app Shizuku")
-            return
-        }
-        when {
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED -> bind()
-            Shizuku.shouldShowRequestPermissionRationale() ->
-                Native.setShizuku(false, "Izin ditolak permanen - aktifkan di app Shizuku")
-            else -> Shizuku.requestPermission(reqShizuku)
+    /**
+     * Dipanggil tiap 2 detik dan saat ada event. Urutan: Shizuku hidup -> izin -> bind service.
+     * Bila bind tidak tersambung dalam 6 detik, bind ulang (nama proses bergantian fs/fs2 agar
+     * proses macet sebelumnya tidak ikut terpakai).
+     */
+    private fun shizukuTick() {
+        try {
+            val s = svc
+            if (s != null) {
+                if (s.asBinder().pingBinder()) return
+                svc = null
+                bindingSince = 0L
+            }
+            if (!Shizuku.pingBinder()) {
+                bindingSince = 0L
+                Native.setShizuku(false, "Shizuku belum berjalan - buka app Shizuku lalu Start")
+                return
+            }
+            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                if (Shizuku.shouldShowRequestPermissionRationale()) {
+                    Native.setShizuku(false, "Izin Shizuku ditolak - izinkan Ngirim di app Shizuku (otomatis tersambung)")
+                    return
+                }
+                val now = SystemClock.elapsedRealtime()
+                if (now - permAskedAt > 15_000) { permAskedAt = now; Shizuku.requestPermission(reqShizuku) }
+                Native.setShizuku(false, "Menunggu izin Shizuku - ketuk Izinkan pada dialog")
+                return
+            }
+            val now = SystemClock.elapsedRealtime()
+            if (bindingSince == 0L || now - bindingSince > 6_000) startBind()
+            else Native.setShizuku(false, if (bindAttempts >= 4)
+                "Service Shizuku belum merespons (percobaan $bindAttempts). Stop lalu Start Shizuku, kemudian ketuk Hubungkan Shizuku."
+            else "Menghubungkan service Shizuku (percobaan $bindAttempts)...")
+        } catch (t: Throwable) {
+            Native.setShizuku(false, "Shizuku error: ${t.message}")
         }
     }
 
-    private fun bind() {
-        if (svc != null) return
-        try { Shizuku.bindUserService(userArgs, conn) }
+    private fun startBind() {
+        curArgs?.let { try { Shizuku.unbindUserService(it, conn, true) } catch (_: Throwable) {} }
+        bindAttempts++
+        val args = makeArgs(if (bindAttempts % 2 == 1) "fs" else "fs2")
+        curArgs = args
+        bindingSince = SystemClock.elapsedRealtime()
+        Native.setShizuku(false, "Menghubungkan service Shizuku (percobaan $bindAttempts)...")
+        if (bindAttempts > 1) Native.log("Shizuku: bind ulang (percobaan $bindAttempts)")
+        try { Shizuku.bindUserService(args, conn) }
         catch (t: Throwable) { Native.setShizuku(false, "Gagal bind: ${t.message}") }
     }
 
@@ -300,7 +343,14 @@ class MainActivity : Activity() {
     private fun handle(a: String) {
         val p = a.split("|", limit = 4)
         when (p[0]) {
-            "CONNECT" -> worker.execute { connect() }
+            "CONNECT" -> {
+                bindingSince = 0L; bindAttempts = 0; permAskedAt = 0L
+                shizukuWatch.execute { shizukuTick() }
+            }
+            "OPEN_SHIZUKU" -> runOnUiThread {
+                val i = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                if (i != null) startActivity(i) else Native.log("ERR app Shizuku tidak ditemukan - pasang dari shizuku.rikka.app")
+            }
             "REFRESH" -> refresh()
             "ROUTE" -> { routeIdx = p[1].toInt(); refresh() }
             "CANCEL", "NET_CANCEL" -> Thread { try { svc?.cancel() } catch (_: Throwable) {} }.start()

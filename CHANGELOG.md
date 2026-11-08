@@ -1,5 +1,15 @@
 # Changelog Ngirim
 
+## v1.0 - 2026-11-08 (rilis final)
+
+Menggabungkan semua fitur v1.1-beta dan v1.2-beta, ditambah:
+
+### Perbaikan
+- Status "Menunggu Shizuku" tidak lagi menggantung: koneksi dicek ulang tiap 2 detik dan otomatis tersambung
+  setelah izin diberikan (termasuk lewat daftar aplikasi di app Shizuku); service yang macet di-bind ulang
+  tiap 6 detik dengan nama proses bergantian
+- Pesan status Shizuku lebih jelas, ada tombol *Buka app Shizuku*
+
 ## v1.2-beta - 2026-11-08
 
 ### Baru
@@ -30,7 +40,7 @@
 - Build rilis bertanda tangan otomatis lewat GitHub Actions
 - README
 
-### Catatan Beta
+### Catatan
 - Data Wi-Fi tidak dienkripsi (otentikasi PIN saja)
 - Nama non-Latin bisa tampil sebagai "?"
 - Router dengan client isolation memblokir koneksi antar-perangkat

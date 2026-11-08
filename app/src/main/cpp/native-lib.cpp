@@ -102,7 +102,7 @@ ImFont* g_mono = nullptr;
 float g_density = 1.f;
 
 const char* kChangelog[] = {
-    "v1.2 Beta",
+    "v1.0 (final)",
     "",
     "Baru",
     "- Tab FTP: dua panel berdampingan (HP ini | perangkat lain) dengan pintasan folder",
@@ -114,11 +114,13 @@ const char* kChangelog[] = {
     "",
     "Perbaikan",
     "- Tab Wi-Fi, FTP, Terminal, dan Changelog sekarang bisa di-tap",
+    "- Koneksi Shizuku otomatis dicoba ulang (cek tiap 2 dtk, bind ulang bila macet),",
+    "  tetap tersambung walau izin diberikan lewat app Shizuku; ada tombol Buka app Shizuku",
     "",
-    "v1.1 Beta",
+    "Riwayat: v1.1 Beta, v1.2 Beta",
     "- Transfer lokal, Wi-Fi (PIN), file browser, terminal, live progress",
     "",
-    "Catatan Beta",
+    "Catatan",
     "- Data Wi-Fi tidak dienkripsi (otentikasi PIN saja)",
     "- Nama non-Latin bisa tampil sebagai '?'",
     "- Router dengan client isolation memblokir koneksi antar-perangkat",
@@ -640,12 +642,16 @@ void drawUI() {
 
     ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.f, 1.f), "Ngirim");
     ImGui::SameLine();
-    ImGui::TextDisabled("v1.2 Beta");
+    ImGui::TextDisabled("v1.0");
     if (S.shizuku) {
         ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.f), "%s", S.shizukuMsg.c_str());
     } else {
-        ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "%s", S.shizukuMsg.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.5f, 0.4f, 1.f));
+        ImGui::TextWrapped("%s", S.shizukuMsg.c_str());
+        ImGui::PopStyleColor();
         if (ImGui::Button("Hubungkan Shizuku")) act("CONNECT");
+        ImGui::SameLine();
+        if (ImGui::Button("Buka app Shizuku")) act("OPEN_SHIZUKU");
     }
 
     if (S.bOpen) {
