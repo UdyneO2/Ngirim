@@ -1,5 +1,8 @@
 package com.ngirim.app
 
+import android.util.Base64
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -14,7 +17,13 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.text.SimpleDateFormat
 import java.util.Collections
+import java.util.Date
+import java.util.Locale
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import javax.crypto.Mac
@@ -485,6 +494,168 @@ class FileService : IFileService.Stub() {
             val r = receiveSession(c.inp, c.out, dest, c.peerName, cb)
             finish(cb, r.ok, r.msg, r.done, r.total)
         }
+    }
+
+
+    // ---------------------------------------------------------------- file manager
+    override fun listDetailed(dir: String): Array<String> {
+        val kids = File(dir).listFiles() ?: return emptyArray()
+        return kids.map {
+            "${it.name}\t${if (it.isFile) it.length() else 0L}\t${if (it.isDirectory) 1 else 0}\t${it.lastModified()}"
+        }.toTypedArray()
+    }
+
+    override fun rename(from: String, to: String): Boolean = try {
+        val t = File(to)
+        !t.exists() && File(from).renameTo(t)
+    } catch (_: Throwable) { false }
+
+    override fun pathSize(path: String): Long = try { sizeOf(File(path)) } catch (_: Throwable) { 0L }
+
+    /** Hapus; bila trashDir tidak kosong, pindahkan ke <trashDir>/<stempel>/ (kecuali Android/data, Android/obb, dan isi sampah). */
+    override fun deletePaths(paths: Array<String>, trashDir: String, cb: IProgressCallback) =
+        startClient(cb) { doDelete(paths, trashDir, cb) }
+
+    private fun doDelete(paths: Array<String>, trashDir: String, cb: IProgressCallback) {
+        var ok = 0
+        var failed = 0
+        val total = paths.size.toLong()
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val bin = if (trashDir.isEmpty()) null else File(trashDir, stamp)
+        val origin = StringBuilder()
+        for ((i, p) in paths.withIndex()) {
+            if (cancelled) break
+            val f = File(p)
+            try {
+                cb.onProgress(f.name, i.toLong(), total, 0.0)
+                val permanent = bin == null || p.startsWith("/sdcard/Android/data") || p.startsWith("/sdcard/Android/obb") ||
+                        p.startsWith(trashDir)
+                if (permanent) {
+                    if (!f.deleteRecursively()) throw IOException("tidak bisa dihapus")
+                } else {
+                    bin!!.mkdirs()
+                    val target = uniqueFile(File(bin, f.name))
+                    if (!f.renameTo(target)) {
+                        Job(cb, 0).copy(f, target)
+                        if (!f.deleteRecursively()) throw IOException("salinan ke sampah ok, asli tidak terhapus")
+                    }
+                    origin.append(target.name).append('\t').append(p).append('\n')
+                }
+                ok++
+                log(cb, "OK     hapus ${f.name}")
+            } catch (e: Throwable) {
+                failed++
+                log(cb, "GAGAL  hapus ${f.name}: ${e.message}")
+            }
+        }
+        if (bin != null && origin.isNotEmpty()) try { File(bin, ".asal.txt").writeText(origin.toString()) } catch (_: Throwable) {}
+        cb.onProgress("", ok.toLong() + failed, total, 0.0)
+        finish(cb, !cancelled && failed == 0,
+            (if (cancelled) "Dibatalkan: " else "Selesai: ") + "$ok dihapus, $failed gagal", ok.toLong() + failed, total)
+    }
+
+    // ---------------------------------------------------------------- backup XAPK
+    override fun backupXapk(jobs: Array<String>, cb: IProgressCallback) = startClient(cb) { doXapk(jobs, cb) }
+
+    private class XJob(val j: JSONObject) {
+        val out: String = j.getString("out")
+        val obb: Boolean = j.optBoolean("obb", false)
+        val data: Boolean = j.optBoolean("data", false)
+        val apks: List<Pair<String, String>> = j.getJSONArray("apks").let { a ->
+            List(a.length()) { val o = a.getJSONObject(it); o.getString("path") to o.getString("entry") }
+        }
+    }
+
+    /**
+     * Satu job = {out, obb, icon_b64, manifest{...}, apks:[{path,entry}]}.
+     * Hasil: ZIP (.xapk) berisi manifest.json, icon.png, APK (base + split), dan opsional Android/obb/<pkg>/*.
+     */
+    private fun doXapk(jobs: Array<String>, cb: IProgressCallback) {
+        val parsed = jobs.map { XJob(JSONObject(it)) }
+        var total = 0L
+        for (x in parsed) {
+            total += x.apks.sumOf { File(it.first).length() }
+            val pk = x.j.getJSONObject("manifest").getString("package_name")
+            if (x.obb) total += extraFiles("obb", pk).sumOf { it.length() }
+            if (x.data) total += extraFiles("data", pk).sumOf { it.length() }
+        }
+        val job = Job(cb, total)
+        var ok = 0
+        var failed = 0
+        for (x in parsed) {
+            if (cancelled) break
+            val pkg = x.j.getJSONObject("manifest").getString("package_name")
+            var tmp: File? = null
+            try {
+                // pasangan (folder dasar, file): OBB lalu DATA, masing-masing di bawah Android/<jenis>/<pkg>/
+                val extras = ArrayList<Pair<String, File>>()
+                if (x.obb) extraFiles("obb", pkg).forEach { extras += "obb" to it }
+                if (x.data) extraFiles("data", pkg).forEach { extras += "data" to it }
+                val size = x.apks.sumOf { File(it.first).length() } + extras.sumOf { it.second.length() }
+                if (size >= 0xFFFFFFFFL - 1_000_000L)
+                    throw IOException("melebihi batas ZIP 4 GB - matikan opsi OBB/DATA")
+                val outFile = uniqueFile(File(x.out))
+                outFile.parentFile?.mkdirs()
+                tmp = File(outFile.path + ".part")
+
+                val m = x.j.getJSONObject("manifest")
+                m.put("total_size", size)
+                if (extras.isNotEmpty()) {
+                    val ex = JSONArray()
+                    for ((kind, f) in extras) {
+                        val rel = "Android/$kind/$pkg/" + f.relativeTo(File("/sdcard/Android/$kind/$pkg")).path
+                        ex.put(JSONObject().put("file", rel).put("install_location", "EXTERNAL_STORAGE").put("install_path", rel))
+                    }
+                    m.put("expansions", ex)
+                }
+
+                ZipOutputStream(BufferedOutputStream(FileOutputStream(tmp), 1 shl 16)).use { z ->
+                    z.setLevel(Deflater.DEFAULT_COMPRESSION)
+                    z.putNextEntry(ZipEntry("manifest.json"))
+                    z.write(m.toString(2).toByteArray()); z.closeEntry()
+                    val icon = x.j.optString("icon_b64", "")
+                    if (icon.isNotEmpty()) {
+                        z.putNextEntry(ZipEntry("icon.png"))
+                        z.write(Base64.decode(icon, Base64.DEFAULT)); z.closeEntry()
+                    }
+                    z.setLevel(Deflater.NO_COMPRESSION) // APK/OBB sudah terkompresi
+                    for ((path, entry) in x.apks) zipFile(z, File(path), entry, job)
+                    for ((kind, f) in extras)
+                        zipFile(z, f, "Android/$kind/$pkg/" + f.relativeTo(File("/sdcard/Android/$kind/$pkg")).path, job)
+                }
+                if (!tmp.renameTo(outFile)) throw IOException("gagal menamai hasil")
+                ok++
+                log(cb, "OK     ${outFile.name} (${fmt(outFile.length())})")
+            } catch (e: InterruptedException) {
+                tmp?.delete(); break
+            } catch (e: Throwable) {
+                tmp?.delete()
+                failed++
+                log(cb, "GAGAL  $pkg: ${e.message}")
+            }
+        }
+        job.emit("", force = true)
+        finish(cb, !cancelled && failed == 0,
+            (if (cancelled) "Dibatalkan: " else "Selesai: ") + "$ok XAPK dibuat, $failed gagal", job.done, total)
+    }
+
+    /** kind = "obb" atau "data": semua file di /sdcard/Android/<kind>/<pkg>. */
+    private fun extraFiles(kind: String, pkg: String): List<File> =
+        File("/sdcard/Android/$kind/$pkg").takeIf { it.isDirectory }?.walkTopDown()?.filter { it.isFile }?.toList() ?: emptyList()
+
+    private fun zipFile(z: ZipOutputStream, f: File, entry: String, job: Job) {
+        z.putNextEntry(ZipEntry(entry))
+        FileInputStream(f).use { i ->
+            while (true) {
+                val n = i.read(job.buf)
+                if (n < 0) break
+                z.write(job.buf, 0, n)
+                job.done += n
+                job.emit(f.name)
+                if (cancelled) throw InterruptedException("cancel")
+            }
+        }
+        z.closeEntry()
     }
 
     // ---------------------------------------------------------------- util

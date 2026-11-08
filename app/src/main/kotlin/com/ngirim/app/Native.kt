@@ -10,12 +10,22 @@ object Native {
     @JvmStatic external fun pollAction(): String
     @JvmStatic external fun log(msg: String)
 
-    // lokal
+    // umum / pengaturan
     @JvmStatic external fun setShizuku(ok: Boolean, msg: String)
-    @JvmStatic external fun setRoutes(names: Array<String>)
-    @JvmStatic external fun setItems(names: Array<String>, sizes: LongArray)
-    @JvmStatic external fun setProgress(busy: Boolean, done: Long, total: Long, speed: Double, cur: String)
-    @JvmStatic external fun setCustom(src: String, dst: String)
+    @JvmStatic external fun selectTab(idx: Int)
+    @JvmStatic external fun setSettings(dark: Boolean, hidden: Boolean, trash: Boolean, xapkDir: String, devName: String)
+
+    // file manager (tab Lokal)
+    @JvmStatic external fun setFm(
+        path: String, err: String, filter: String, sort: Int, asc: Boolean,
+        names: Array<String>, sizes: LongArray, dirs: BooleanArray, mtimes: LongArray
+    )
+    @JvmStatic external fun setClip(count: Int, cut: Boolean)
+    @JvmStatic external fun setFmProgress(busy: Boolean, done: Long, total: Long, speed: Double, cur: String)
+
+    // APK / XAPK
+    @JvmStatic external fun setApps(filter: String, names: Array<String>, subs: Array<String>, sizes: LongArray)
+    @JvmStatic external fun setApkProgress(busy: Boolean, done: Long, total: Long, speed: Double, cur: String)
 
     // jaringan
     @JvmStatic external fun setNetPerm(ok: Boolean, msg: String)

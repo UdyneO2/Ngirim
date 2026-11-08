@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <GLES3/gl3.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cfloat>
 #include <chrono>
 #include <cstdio>
@@ -17,10 +18,10 @@
 
 namespace {
 
-constexpr int kCustomRoute = 6;  // harus sama dengan indeks rute "Kustom" di MainActivity
+constexpr const char* kVersion = "v2.0";
 
-struct Item { std::string name; long long size = 0; bool sel = false; };
-struct Entry { std::string name; long long size = 0; bool dir = false; bool sel = false; };
+struct Item { std::string name, sub; long long size = 0; bool sel = false; };
+struct Entry { std::string name; long long size = 0; long long mtime = 0; bool dir = false; bool sel = false; };
 
 struct Pane {
     std::string path, err;
@@ -30,25 +31,44 @@ struct Pane {
 
 struct State {
     std::mutex mu;
-    // ---- transfer lokal
-    std::vector<std::string> routes;
-    int route = 0;
-    std::vector<Item> items;
+    // ---- umum
     bool shizuku = false;
     std::string shizukuMsg = "Menunggu Shizuku...";
-    bool busy = false;
-    long long done = 0, total = 0;
-    double speed = 0;
-    std::string cur;
-    int move = 0;  // 0 salin, 1 pindah
-    std::string customSrc, customDst;
+    std::deque<std::string> actions;
+    std::vector<std::string> logs;
+    bool logDirty = false;
+    int tabReq = -1;  // paksa pindah tab (indeks), -1 = tidak
+    // ---- pengaturan
+    bool dark = false, showHidden = false, useTrash = true;
+    std::string xapkDir, devName;
+    // ---- file manager (tab Lokal)
+    std::string fmPath, fmErr, fmFilter;
+    std::vector<Entry> fm;
+    int fmSort = 0;  // 0 nama, 1 ukuran, 2 tanggal, 3 jenis
+    bool fmAsc = true;
+    int clipCount = 0;
+    bool clipCut = false;
+    bool mBusy = false;
+    long long mDone = 0, mTotal = 0;
+    double mSpeed = 0;
+    std::string mCur;
+    // ---- APK
+    std::vector<Item> apps;
+    std::string apkFilter;
+    int apkFmt = 0;  // 0 XAPK, 1 APK + split (folder)
+    bool apkObb = false, apkData = false, apkSystem = false;
+    bool apkOpen = false;  // layar pemilih aplikasi (dibuka dari tab Lokal)
+    bool aBusy = false;
+    long long aDone = 0, aTotal = 0;
+    double aSpeed = 0;
+    std::string aCur;
     // ---- jaringan
     bool permOk = false;
     std::string permMsg = "Memeriksa...";
     std::vector<std::string> peers;
     std::string pairedName, addr, pin, recvDir;
     bool listening = false;
-    bool allowBrowse = false;  // penerima: izinkan perangkat terpasang menjelajah /sdcard
+    bool allowBrowse = false;
     std::vector<Item> sendList;
     bool netBusy = false;
     long long netDone = 0, netTotal = 0;
@@ -62,16 +82,12 @@ struct State {
     long long fDone = 0, fTotal = 0;
     double fSpeed = 0;
     std::string fCur;
-    int fMove = 0;  // 0 salin, 1 pindah
-    // ---- file browser
+    int fMove = 0;
+    // ---- file browser (pilih file/folder)
     bool bOpen = false;
-    int bPurpose = 0;  // 1 kirim, 2 folder terima, 3 sumber kustom, 4 tujuan kustom
+    int bPurpose = 0;  // 1 kirim, 2 folder terima, 5 folder hasil XAPK
     std::string bPath;
     std::vector<Entry> bEntries;
-    // ---- umum
-    std::deque<std::string> actions;
-    std::vector<std::string> logs;
-    bool logDirty = false;
 } S;
 
 // Antrean sentuh: ImGui butuh minimal 1 frame hover sebelum tombol ditekan, kalau tidak widget
@@ -101,30 +117,69 @@ ImGuiContext* g_ctx = nullptr;
 ImFont* g_mono = nullptr;
 float g_density = 1.f;
 
+// Palet tema (mirip Windows 10: aksen biru #0078D7, kontrol datar bersudut tajam)
+struct Pal { ImVec4 ok, warn, err, accent, dim, onAccent, panel, hoverRow; ImU32 text, border, boxBg; } g_pal;
+
+ImVec4 rgb(int r, int g, int b, float a = 1.f) { return ImVec4(r / 255.f, g / 255.f, b / 255.f, a); }
+
+void applyTheme(bool dark) {
+    ImVec4* c = ImGui::GetStyle().Colors;
+    const ImVec4 accent = rgb(0, 120, 215);
+    ImVec4 bg, panel, text, dis, border, btn, btnH, btnA, sel, selH, frame, frameH;
+    if (!dark) {
+        bg = rgb(255, 255, 255); panel = rgb(243, 243, 243); text = rgb(20, 20, 20); dis = rgb(112, 112, 112);
+        border = rgb(173, 173, 173); btn = rgb(225, 225, 225); btnH = rgb(229, 241, 251); btnA = rgb(204, 228, 247);
+        sel = rgb(204, 232, 255); selH = rgb(229, 243, 255); frame = rgb(255, 255, 255); frameH = rgb(229, 241, 251);
+        g_pal.ok = rgb(16, 124, 16); g_pal.warn = rgb(196, 89, 17); g_pal.err = rgb(196, 43, 28);
+    } else {
+        bg = rgb(31, 31, 31); panel = rgb(43, 43, 43); text = rgb(240, 240, 240); dis = rgb(160, 160, 160);
+        border = rgb(95, 95, 95); btn = rgb(51, 51, 51); btnH = rgb(65, 65, 65); btnA = rgb(80, 80, 80);
+        sel = rgb(0, 74, 143); selH = rgb(52, 62, 72); frame = rgb(43, 43, 43); frameH = rgb(65, 65, 65);
+        g_pal.ok = rgb(108, 203, 95); g_pal.warn = rgb(252, 185, 90); g_pal.err = rgb(255, 120, 105);
+    }
+    g_pal.accent = accent; g_pal.dim = dis; g_pal.onAccent = rgb(255, 255, 255); g_pal.panel = panel; g_pal.hoverRow = selH;
+    g_pal.text = ImGui::ColorConvertFloat4ToU32(text); g_pal.border = ImGui::ColorConvertFloat4ToU32(border);
+    g_pal.boxBg = ImGui::ColorConvertFloat4ToU32(frame);
+
+    c[ImGuiCol_Text] = text; c[ImGuiCol_TextDisabled] = dis;
+    c[ImGuiCol_WindowBg] = bg; c[ImGuiCol_ChildBg] = bg; c[ImGuiCol_PopupBg] = bg;
+    c[ImGuiCol_Border] = border; c[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_FrameBg] = frame; c[ImGuiCol_FrameBgHovered] = frameH; c[ImGuiCol_FrameBgActive] = btnA;
+    c[ImGuiCol_CheckMark] = accent;
+    c[ImGuiCol_Button] = btn; c[ImGuiCol_ButtonHovered] = btnH; c[ImGuiCol_ButtonActive] = btnA;
+    c[ImGuiCol_Header] = sel; c[ImGuiCol_HeaderHovered] = selH; c[ImGuiCol_HeaderActive] = sel;
+    c[ImGuiCol_Separator] = border; c[ImGuiCol_SeparatorHovered] = accent; c[ImGuiCol_SeparatorActive] = accent;
+    c[ImGuiCol_Tab] = panel; c[ImGuiCol_TabHovered] = selH; c[ImGuiCol_TabSelected] = bg;
+    c[ImGuiCol_TabSelectedOverline] = accent; c[ImGuiCol_TabDimmed] = panel; c[ImGuiCol_TabDimmedSelected] = bg;
+    c[ImGuiCol_TabDimmedSelectedOverline] = accent;
+    c[ImGuiCol_PlotHistogram] = rgb(6, 176, 37);
+    c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0); c[ImGuiCol_ScrollbarGrab] = border;
+    c[ImGuiCol_TextSelectedBg] = sel;
+}
+
 const char* kChangelog[] = {
-    "v1.0 (final)",
+    "v2.0",
+    "- UI baru bergaya Windows 10: tema Terang/Gelap, kontrol datar, ikon file/folder",
+    "- Tab Lokal sekarang file manager: salin, potong, tempel, hapus (tempat sampah), ganti nama,",
+    "  folder baru, properti, urutkan, cari, dan akses cepat ke folder (bisa disematkan)",
+    "- Backup APK: tombol di tab Lokal membuka pemilih aplikasi, hasil langsung .xapk",
+    "  (manifest + split APK, OBB dan DATA game opsional)",
+    "- Tab Pengaturan menggantikan Changelog (riwayat perubahan ada di bagian bawah)",
+    "- Terminal menjadi tab Log, diletakkan setelah Pengaturan (urutan: Lokal, Wi-Fi, FTP, Pengaturan, Log)",
+    "- Rute lama (Foto, OBB, DATA, Kustom) digantikan file manager + akses cepat",
     "",
-    "Baru",
-    "- Tab FTP: dua panel berdampingan (HP ini | perangkat lain) dengan pintasan folder",
-    "- Panel kanan bisa menjelajah folder perangkat yang sudah dipairing, lalu salin dua arah",
-    "- Pintasan folder bawaan + simpan folder favorit sendiri",
-    "- Saklar Terima ON/OFF di tab Wi-Fi; folder simpan default /sdcard/Ngirim/Terima",
-    "- Perangkat aktif tampil otomatis (tanpa menekan Cari), yang offline hilang sendiri",
-    "- Izin jelajah FTP bisa dimatikan di perangkat penerima (dibatasi ke /sdcard)",
+    "v1.0",
+    "- Perbaikan tab tidak bisa di-tap, koneksi Shizuku otomatis, tab FTP dua panel,",
+    "  saklar Terima, perangkat aktif otomatis, jelajah folder perangkat lain",
     "",
-    "Perbaikan",
-    "- Tab Wi-Fi, FTP, Terminal, dan Changelog sekarang bisa di-tap",
-    "- Koneksi Shizuku otomatis dicoba ulang (cek tiap 2 dtk, bind ulang bila macet),",
-    "  tetap tersambung walau izin diberikan lewat app Shizuku; ada tombol Buka app Shizuku",
-    "",
-    "Riwayat: v1.1 Beta, v1.2 Beta",
-    "- Transfer lokal, Wi-Fi (PIN), file browser, terminal, live progress",
+    "v1.1 - v1.2 Beta",
+    "- Transfer Wi-Fi dengan PIN, file browser, log, live progress",
     "",
     "Catatan",
     "- Data Wi-Fi tidak dienkripsi (otentikasi PIN saja)",
     "- Nama non-Latin bisa tampil sebagai '?'",
     "- Router dengan client isolation memblokir koneksi antar-perangkat",
-    "- Jelajah jarak jauh: hanya salin (tanpa pindah/hapus)",
+    "- XAPK dengan isi total di atas 4 GB tidak didukung (batas ZIP)",
 };
 
 std::string fmtSize(double b) {
@@ -145,6 +200,16 @@ std::string fmtEta(double s) {
     return buf;
 }
 
+std::string fmtDate(long long ms) {
+    if (ms <= 0) return "";
+    time_t t = (time_t)(ms / 1000);
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    char b[32];
+    strftime(b, sizeof b, "%Y-%m-%d %H:%M", &tmv);
+    return b;
+}
+
 std::string js(JNIEnv* e, jstring s) {
     if (!s) return "";
     const char* c = e->GetStringUTFChars(s, nullptr);
@@ -154,6 +219,12 @@ std::string js(JNIEnv* e, jstring s) {
 }
 
 void act(const std::string& a) { S.actions.push_back(a); }
+
+void dimWrapped(const char* t) {
+    ImGui::PushStyleColor(ImGuiCol_Text, g_pal.dim);
+    ImGui::TextWrapped("%s", t);
+    ImGui::PopStyleColor();
+}
 
 // Drag sentuh = scroll. Dipanggil di dalam child window.
 void touchScroll() {
@@ -168,7 +239,7 @@ void progressBlock(bool busy, long long done, long long total, double speed, con
     const float d = g_density;
     if (!(busy || total > 0)) return;
     float pct = total > 0 ? (float)((double)done / (double)total) : 0.f;
-    ImGui::ProgressBar(pct, ImVec2(-FLT_MIN, 30.f * d));
+    ImGui::ProgressBar(pct, ImVec2(-FLT_MIN, 26.f * d));
     ImGui::TextWrapped("%s", cur.c_str());
     double eta = speed > 1 ? (double)(total - done) / speed : -1;
     ImGui::Text("%s / %s | %s/s | ETA %s", fmtSize((double)done).c_str(), fmtSize((double)total).c_str(),
@@ -177,7 +248,7 @@ void progressBlock(bool busy, long long done, long long total, double speed, con
 
 // Log gaya terminal (monospace, latar gelap, warna per jenis baris)
 void drawTerminal(const char* id, float h) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.02f, 0.03f, 0.02f, 1.f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.05f, 0.04f, 1.f));
     ImGui::BeginChild(id, ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
     if (g_mono) ImGui::PushFont(g_mono);
     for (auto& l : S.logs) {
@@ -196,93 +267,19 @@ void drawTerminal(const char* id, float h) {
     ImGui::PopStyleColor();
 }
 
-// ------------------------------------------------------------------ transfer lokal
-void drawTransfer() {
-    const float d = g_density;
-
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    const char* prev = S.routes.empty() ? "-" : S.routes[S.route].c_str();
-    ImGui::BeginDisabled(S.busy);
-    if (ImGui::BeginCombo("##route", prev)) {
-        for (int i = 0; i < (int)S.routes.size(); i++) {
-            if (ImGui::Selectable(S.routes[i].c_str(), i == S.route) && i != S.route) {
-                S.route = i;
-                S.items.clear();
-                act("ROUTE|" + std::to_string(i));
-            }
-        }
-        ImGui::EndCombo();
-    }
-    if (S.route == kCustomRoute) {
-        ImGui::TextWrapped("Sumber: %s", S.customSrc.empty() ? "(belum dipilih)" : S.customSrc.c_str());
-        ImGui::TextWrapped("Tujuan: %s", S.customDst.empty() ? "(belum dipilih)" : S.customDst.c_str());
-        if (ImGui::Button("Pilih sumber")) act("BPURPOSE|3");
-        ImGui::SameLine();
-        if (ImGui::Button("Pilih tujuan")) act("BPURPOSE|4");
-    }
-    if (ImGui::Button("Segarkan")) act("REFRESH");
-    ImGui::SameLine();
-    if (ImGui::Button("Pilih semua")) for (auto& it : S.items) it.sel = true;
-    ImGui::SameLine();
-    if (ImGui::Button("Kosongkan")) for (auto& it : S.items) it.sel = false;
-    ImGui::RadioButton("Salin", &S.move, 0);
-    ImGui::SameLine();
-    ImGui::RadioButton("Pindah", &S.move, 1);
-    ImGui::EndDisabled();
-
-    int n = 0; long long tot = 0;
-    for (auto& it : S.items) if (it.sel) { n++; tot += it.size; }
-
-    const float footer = 235.f * d;
-    float h = ImGui::GetContentRegionAvail().y - footer;
-    if (h < 120.f * d) h = 120.f * d;
-    ImGui::BeginChild("list", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
-    if (S.items.empty()) {
-        ImGui::TextDisabled(S.route == kCustomRoute ? "Pilih folder sumber dan tujuan." :
-                            (S.shizuku || S.route == 0) ? "Daftar kosong." : "Hubungkan Shizuku dulu.");
-    }
-    ImGuiListClipper clip;
-    clip.Begin((int)S.items.size());
-    while (clip.Step()) {
-        for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) {
-            Item& it = S.items[i];
-            std::string label = it.name + "  [" + fmtSize((double)it.size) + "]##" + std::to_string(i);
-            ImGui::Checkbox(label.c_str(), &it.sel);
-        }
-    }
-    touchScroll();
-    ImGui::EndChild();
-
-    ImGui::Text("Dipilih: %d item (%s)", n, fmtSize((double)tot).c_str());
-
-    if (!S.busy) {
-        bool dstOk = S.route != kCustomRoute || (!S.customSrc.empty() && !S.customDst.empty());
-        ImGui::BeginDisabled(!(S.shizuku && n > 0 && dstOk));
-        if (ImGui::Button("MULAI TRANSFER", ImVec2(-FLT_MIN, 58.f * d))) {
-            std::string idx;
-            for (int i = 0; i < (int)S.items.size(); i++)
-                if (S.items[i].sel) idx += (idx.empty() ? "" : ",") + std::to_string(i);
-            act("START|" + std::to_string(S.route) + "|" + std::to_string(S.move) + "|" + idx);
-            S.busy = true; S.done = 0; S.total = 0; S.speed = 0; S.cur = "Menyiapkan...";
-        }
-        ImGui::EndDisabled();
-    } else {
-        if (ImGui::Button("BATALKAN", ImVec2(-FLT_MIN, 58.f * d))) act("CANCEL");
-    }
-    progressBlock(S.busy, S.done, S.total, S.speed, S.cur);
-}
-
 // ------------------------------------------------------------------ widget kecil
 // Saklar ON/OFF; true saat diketuk.
 bool toggleSwitch(const char* id, bool on) {
     const float d = g_density;
-    const float h = 30.f * d, w = 56.f * d;
+    const float h = 28.f * d, w = 54.f * d;
     ImVec2 p = ImGui::GetCursorScreenPos();
     bool clicked = ImGui::InvisibleButton(id, ImVec2(w, h));
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), on ? IM_COL32(60, 190, 100, 255) : IM_COL32(90, 90, 105, 255), h * 0.5f);
-    dl->AddCircleFilled(ImVec2(on ? p.x + w - h * 0.5f : p.x + h * 0.5f, p.y + h * 0.5f), h * 0.5f - 4.f * d,
-                        IM_COL32(255, 255, 255, 255));
+    ImU32 offBorder = g_pal.border;
+    if (on) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::ColorConvertFloat4ToU32(g_pal.accent), h * 0.5f);
+    else dl->AddRect(p, ImVec2(p.x + w, p.y + h), offBorder, h * 0.5f, 0, 2.f * d);
+    dl->AddCircleFilled(ImVec2(on ? p.x + w - h * 0.5f : p.x + h * 0.5f, p.y + h * 0.5f), h * 0.5f - 6.f * d,
+                        on ? IM_COL32(255, 255, 255, 255) : g_pal.text);
     return clicked;
 }
 
@@ -296,9 +293,12 @@ bool wrapButton(const std::string& label, bool& first, bool highlight = false) {
         if (nextX2 < w->WorkRect.Max.x) ImGui::SameLine();
     }
     first = false;
-    if (highlight) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.75f, 1.f));
+    if (highlight) {
+        ImGui::PushStyleColor(ImGuiCol_Button, g_pal.accent);
+        ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
+    }
     bool r = ImGui::Button(label.c_str());
-    if (highlight) ImGui::PopStyleColor();
+    if (highlight) ImGui::PopStyleColor(2);
     return r;
 }
 
@@ -315,12 +315,354 @@ std::string baseName(const std::string& p) {
     return i == std::string::npos ? p : p.substr(i + 1);
 }
 
-// ------------------------------------------------------------------ jaringan
+std::string lowerExt(const std::string& n) {
+    size_t i = n.find_last_of('.');
+    if (i == std::string::npos || i + 1 >= n.size()) return "";
+    std::string e = n.substr(i + 1);
+    for (auto& ch : e) ch = (char)tolower((unsigned char)ch);
+    return e;
+}
+
+// Ikon folder (kuning) dan file (kertas dengan pita warna menurut jenis)
+void drawEntryIcon(ImDrawList* dl, ImVec2 p, float s, bool dir, const std::string& name) {
+    if (dir) {
+        const ImU32 body = IM_COL32(255, 208, 91, 255), back = IM_COL32(230, 168, 30, 255);
+        dl->AddRectFilled(ImVec2(p.x, p.y + s * 0.12f), ImVec2(p.x + s * 0.45f, p.y + s * 0.32f), back);
+        dl->AddRectFilled(ImVec2(p.x, p.y + s * 0.26f), ImVec2(p.x + s, p.y + s * 0.88f), body);
+        dl->AddRectFilled(ImVec2(p.x, p.y + s * 0.26f), ImVec2(p.x + s, p.y + s * 0.34f), back);
+        return;
+    }
+    const std::string e = lowerExt(name);
+    ImU32 band = IM_COL32(120, 144, 156, 255);
+    if (e == "apk" || e == "xapk" || e == "apks") band = IM_COL32(61, 190, 110, 255);
+    else if (e == "jpg" || e == "jpeg" || e == "png" || e == "webp" || e == "gif" || e == "heic") band = IM_COL32(0, 150, 136, 255);
+    else if (e == "mp4" || e == "mkv" || e == "mov" || e == "avi" || e == "webm") band = IM_COL32(156, 39, 176, 255);
+    else if (e == "mp3" || e == "m4a" || e == "flac" || e == "wav" || e == "ogg") band = IM_COL32(233, 30, 99, 255);
+    else if (e == "zip" || e == "rar" || e == "7z" || e == "tar" || e == "gz" || e == "obb") band = IM_COL32(255, 152, 0, 255);
+    else if (e == "pdf") band = IM_COL32(229, 57, 53, 255);
+    const float x0 = p.x + s * 0.16f, x1 = p.x + s * 0.84f, y0 = p.y, y1 = p.y + s, f = s * 0.24f;
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(250, 250, 250, 255));
+    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(150, 150, 150, 255));
+    dl->AddTriangleFilled(ImVec2(x1 - f, y0), ImVec2(x1, y0 + f), ImVec2(x1 - f, y0 + f), IM_COL32(205, 205, 205, 255));
+    dl->AddRectFilled(ImVec2(x0 + s * 0.08f, y1 - s * 0.3f), ImVec2(x1 - s * 0.08f, y1 - s * 0.1f), band);
+}
+
+// Kotak centang digambar manual agar bisa rata tengah pada baris tinggi.
+void drawCheck(ImDrawList* dl, ImVec2 c, float s, bool on) {
+    ImVec2 a(c.x - s * 0.5f, c.y - s * 0.5f), b(c.x + s * 0.5f, c.y + s * 0.5f);
+    if (on) {
+        dl->AddRectFilled(a, b, ImGui::ColorConvertFloat4ToU32(g_pal.accent));
+        const float t = s * 0.14f;
+        ImVec2 pts[3] = {ImVec2(c.x - s * 0.26f, c.y), ImVec2(c.x - s * 0.06f, c.y + s * 0.22f), ImVec2(c.x + s * 0.28f, c.y - s * 0.2f)};
+        dl->AddPolyline(pts, 3, IM_COL32(255, 255, 255, 255), 0, t);
+    } else {
+        dl->AddRectFilled(a, b, g_pal.boxBg);
+        dl->AddRect(a, b, g_pal.border, 0, 0, 1.5f * g_density);
+    }
+}
+
+// Baris gaya Explorer. Return: 0 tidak ada, 1 nama diketuk, 2 kotak centang diketuk.
+int rowFrame(const char* id, bool sel, float rowH, bool showBox, ImVec2& origin, float& width) {
+    const float d = g_density;
+    origin = ImGui::GetCursorScreenPos();
+    width = ImGui::GetContentRegionAvail().x;
+    ImGui::PushID(id);
+    ImGui::SetNextItemAllowOverlap();
+    bool nameClicked = ImGui::Selectable("##row", sel, ImGuiSelectableFlags_AllowOverlap, ImVec2(width, rowH));
+    int r = nameClicked ? 1 : 0;
+    const float cbW = showBox ? 52.f * d : 0.f;
+    if (showBox) {
+        ImGui::SetCursorScreenPos(origin);
+        if (ImGui::InvisibleButton("##box", ImVec2(cbW, rowH))) r = 2;
+        drawCheck(ImGui::GetWindowDrawList(), ImVec2(origin.x + cbW * 0.5f, origin.y + rowH * 0.5f), 22.f * d, sel);
+    }
+    ImGui::PopID();
+    origin.x += cbW;
+    width -= cbW;
+    return r;
+}
+
+int fileRow(int idx, Entry& e, float rowH, bool showBox = true, bool showDate = true) {
+    const float d = g_density;
+    ImVec2 q; float w;
+    int r = rowFrame(std::to_string(idx).c_str(), e.sel, rowH, showBox, q, w);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float is = rowH * 0.56f;
+    drawEntryIcon(dl, ImVec2(q.x + 4.f * d, q.y + (rowH - is) * 0.5f), is, e.dir, e.name);
+    const ImVec4 clip(q.x, q.y, q.x + w, q.y + rowH);
+    ImFont* f = ImGui::GetFont();
+    const float fs = ImGui::GetFontSize();
+    const float tx = q.x + is + 14.f * d;
+    std::string info = e.dir ? "" : fmtSize((double)e.size);
+    if (showDate && e.mtime > 0) info += (info.empty() ? "" : "   ") + fmtDate(e.mtime);
+    const float ty = info.empty() ? q.y + (rowH - fs) * 0.5f : q.y + rowH * 0.5f - fs - 1.f * d;
+    dl->AddText(f, fs, ImVec2(tx, ty), g_pal.text, e.name.c_str(), nullptr, 0.f, &clip);
+    if (!info.empty())
+        dl->AddText(f, fs * 0.8f, ImVec2(tx, q.y + rowH * 0.5f + 2.f * d), ImGui::ColorConvertFloat4ToU32(g_pal.dim),
+                    info.c_str(), nullptr, 0.f, &clip);
+    return r;
+}
+
+// Baris aplikasi: avatar huruf + nama + info
+int appRow(int idx, Item& it, float rowH) {
+    const float d = g_density;
+    ImVec2 q; float w;
+    int r = rowFrame(std::to_string(idx).c_str(), it.sel, rowH, true, q, w);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float is = rowH * 0.6f;
+    ImVec2 c(q.x + 4.f * d + is * 0.5f, q.y + rowH * 0.5f);
+    dl->AddCircleFilled(c, is * 0.5f, IM_COL32(0, 120, 215, 255));
+    char ch[2] = {it.name.empty() ? '?' : (char)toupper((unsigned char)it.name[0]), 0};
+    if ((unsigned char)ch[0] >= 0x80) ch[0] = '?';
+    ImVec2 ts = ImGui::CalcTextSize(ch);
+    dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(255, 255, 255, 255), ch);
+    const ImVec4 clip(q.x, q.y, q.x + w, q.y + rowH);
+    ImFont* f = ImGui::GetFont();
+    const float fs = ImGui::GetFontSize();
+    const float tx = q.x + is + 14.f * d;
+    dl->AddText(f, fs, ImVec2(tx, q.y + rowH * 0.5f - fs - 1.f * d), g_pal.text, it.name.c_str(), nullptr, 0.f, &clip);
+    dl->AddText(f, fs * 0.8f, ImVec2(tx, q.y + rowH * 0.5f + 2.f * d), ImGui::ColorConvertFloat4ToU32(g_pal.dim),
+                it.sub.c_str(), nullptr, 0.f, &clip);
+    return r;
+}
+
+template <class T> int countSel(const std::vector<T>& v) { int n = 0; for (auto& x : v) if (x.sel) n++; return n; }
+template <class T> long long sizeSel(const std::vector<T>& v) { long long n = 0; for (auto& x : v) if (x.sel) n += x.size; return n; }
+template <class T> std::string idxSel(const std::vector<T>& v) {
+    std::string idx;
+    for (int i = 0; i < (int)v.size(); i++)
+        if (v[i].sel) idx += (idx.empty() ? "" : ",") + std::to_string(i);
+    return idx;
+}
+
+// Panel berlatar abu-abu (area "ribbon" ala Explorer) dengan tinggi mengikuti isi.
+void beginPanel(const char* id) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.panel);
+    ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar);
+}
+void endPanel() { ImGui::EndChild(); ImGui::PopStyleColor(); }
+
+struct Preset { const char* label; const char* path; };
+const Preset kPresets[] = {
+    {"Internal", "/sdcard"},
+    {"Download", "/sdcard/Download"},
+    {"DCIM", "/sdcard/DCIM"},
+    {"Pictures", "/sdcard/Pictures"},
+    {"Data", "/sdcard/Android/data"},
+    {"OBB", "/sdcard/Android/obb"},
+    {"Ngirim", "/sdcard/Ngirim"},
+};
+
+// Baris "Akses cepat": pintasan bawaan + favorit; tombol terakhir menyematkan/melepas folder saat ini.
+void quickAccess(const std::string& prefix, const std::string& curPath, bool allowPin) {
+    bool first = true;
+    for (auto& p : kPresets)
+        if (wrapButton(std::string(p.label) + "##q" + prefix, first, curPath == p.path)) act(prefix + "|GO|" + p.path);
+    for (int i = 0; i < (int)S.bookmarks.size(); i++) {
+        std::string l = tailEllipsis(baseName(S.bookmarks[i]), 14) + "##bm" + prefix + std::to_string(i);
+        if (wrapButton(l, first, curPath == S.bookmarks[i])) act(prefix + "|GO|" + S.bookmarks[i]);
+    }
+    if (allowPin) {
+        bool isBm = false;
+        for (auto& b : S.bookmarks) if (b == curPath) isBm = true;
+        if (wrapButton(isBm ? "Lepas sematan##pin" : "Sematkan folder ini##pin", first)) act("BM|" + curPath);
+    }
+}
+
+// ------------------------------------------------------------------ Lokal: file manager
+void breadcrumb() {
+    // "/sdcard/Download/x" -> [Internal] [> Download] [> x]; path lain dipecah per "/"
+    std::vector<std::pair<std::string, std::string>> segs;  // label, target
+    std::string p = S.fmPath, cum;
+    size_t i = 0;
+    while (i < p.size()) {
+        while (i < p.size() && p[i] == '/') i++;
+        size_t j = p.find('/', i);
+        if (j == std::string::npos) j = p.size();
+        if (j > i) {
+            std::string part = p.substr(i, j - i);
+            cum += "/" + part;
+            segs.push_back({cum == "/sdcard" ? "Internal" : part, cum});
+        }
+        i = j;
+    }
+    bool first = true;
+    if (wrapButton("Naik##fmup", first)) act("FM|UP");
+    for (size_t k = 0; k < segs.size(); k++) {
+        std::string l = (k ? "> " : "") + tailEllipsis(segs[k].first, 18) + "##seg" + std::to_string(k);
+        if (wrapButton(l, first, k + 1 == segs.size())) act("FM|GO|" + segs[k].second);
+    }
+}
+
+void drawFiles() {
+    const float d = g_density;
+    const int nSel = countSel(S.fm);
+    const bool busy = S.mBusy;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f * d, 4.f * d));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.f * d, 6.f * d));
+    beginPanel("fm_head");
+    breadcrumb();
+
+    // ribbon
+    bool first = true;
+    ImGui::BeginDisabled(nSel == 0 || busy);
+    if (wrapButton("Salin##fm", first)) act("FM|COPY|" + idxSel(S.fm));
+    if (wrapButton("Potong##fm", first)) act("FM|CUT|" + idxSel(S.fm));
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(S.clipCount == 0 || busy);
+    std::string pl = S.clipCount ? "Tempel (" + std::to_string(S.clipCount) + (S.clipCut ? ", potong" : "") + ")##fm" : "Tempel##fm";
+    if (wrapButton(pl, first)) act("FM|PASTE");
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(nSel == 0 || busy);
+    if (wrapButton("Hapus##fm", first)) act("FM|DEL|" + idxSel(S.fm));
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(nSel != 1 || busy);
+    if (wrapButton("Ubah nama##fm", first)) act("FM|REN|" + idxSel(S.fm));
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(busy);
+    if (wrapButton("Folder baru##fm", first)) act("FM|NEW");
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(nSel == 0);
+    if (wrapButton("Properti##fm", first)) act("FM|PROP|" + idxSel(S.fm));
+    if (wrapButton("Kirim##fm", first)) act("FM|SEND|" + idxSel(S.fm));
+    ImGui::EndDisabled();
+    if (wrapButton(nSel == (int)S.fm.size() && nSel > 0 ? "Batal##fm" : "Semua##fm", first))
+        for (auto& e : S.fm) e.sel = !(nSel == (int)S.fm.size() && nSel > 0);
+    if (wrapButton("Segarkan##fm", first)) act("FM|REF");
+    ImGui::BeginDisabled(!S.shizuku);
+    if (wrapButton("Backup APK##fm", first, S.aBusy)) { S.apkOpen = true; act("APK|OPEN"); }
+    ImGui::EndDisabled();
+
+    // akses cepat
+    ImGui::TextColored(g_pal.dim, "Akses cepat");
+    quickAccess("FM", S.fmPath, true);
+
+    // urutkan + cari
+    ImGui::TextColored(g_pal.dim, "Urutkan");
+    first = true;
+    const char* sk[] = {"Nama", "Ukuran", "Tanggal", "Jenis"};
+    for (int k = 0; k < 4; k++) {
+        std::string l = std::string(sk[k]) + (S.fmSort == k ? (S.fmAsc ? " ^" : " v") : "") + "##sort" + std::to_string(k);
+        if (wrapButton(l, first, S.fmSort == k)) act("FM|SORT|" + std::to_string(k));
+    }
+    if (wrapButton(S.fmFilter.empty() ? "Cari...##fm" : ("Cari: " + tailEllipsis(S.fmFilter, 12) + " (hapus)##fm"), first, !S.fmFilter.empty()))
+        act(S.fmFilter.empty() ? "FM|FIND" : "FM|FINDX");
+    endPanel();
+    ImGui::PopStyleVar(2);
+
+    // daftar
+    const bool prog = S.mBusy || S.mTotal > 0;
+    float footer = (prog ? 215.f : 92.f) * d;
+    float h = ImGui::GetContentRegionAvail().y - footer;
+    if (h < 150.f * d) h = 150.f * d;
+    ImGui::BeginChild("fm_list", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
+    if (!S.fmErr.empty()) ImGui::TextColored(g_pal.err, "%s", S.fmErr.c_str());
+    else if (S.fm.empty()) ImGui::TextColored(g_pal.dim, S.fmFilter.empty() ? "Folder ini kosong." : "Tidak ada yang cocok dengan pencarian.");
+    ImGuiListClipper clip;
+    clip.Begin((int)S.fm.size());
+    while (clip.Step()) {
+        for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) {
+            Entry& e = S.fm[i];
+            int r = fileRow(i, e, 56.f * d);
+            if (r == 2) e.sel = !e.sel;
+            else if (r == 1) {
+                if (e.dir) act("FM|OPEN|" + std::to_string(i));
+                else e.sel = !e.sel;
+            }
+        }
+    }
+    touchScroll();
+    ImGui::EndChild();
+
+    // bilah status
+    ImGui::PushStyleColor(ImGuiCol_Text, g_pal.dim);
+    ImGui::TextWrapped("%d item | %d dipilih (%s)%s", (int)S.fm.size(), nSel, fmtSize((double)sizeSel(S.fm)).c_str(),
+                       S.clipCount ? (S.clipCut ? " | Clipboard: potong" : " | Clipboard: salin") : "");
+    ImGui::PopStyleColor();
+    if (S.mBusy) {
+        if (ImGui::Button("BATALKAN##fm", ImVec2(-FLT_MIN, 44.f * d))) act("CANCEL");
+    }
+    progressBlock(S.mBusy, S.mDone, S.mTotal, S.mSpeed, S.mCur);
+}
+
+// ------------------------------------------------------------------ APK -> XAPK
+void drawApk() {
+    const float d = g_density;
+    const int n = countSel(S.apps);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f * d, 4.f * d));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.f * d, 6.f * d));
+    beginPanel("apk_head");
+    bool first = true;
+    if (wrapButton("< Kembali ke file manager##apkback", first)) S.apkOpen = false;
+    ImGui::TextColored(g_pal.accent, "Backup aplikasi");
+    ImGui::BeginDisabled(S.aBusy);
+    ImGui::TextColored(g_pal.dim, "Format backup");
+    first = true;
+    if (wrapButton("XAPK (satu file)##f", first, S.apkFmt == 0)) { S.apkFmt = 0; }
+    if (wrapButton("APK + split (folder)##f", first, S.apkFmt == 1)) { S.apkFmt = 1; }
+    ImGui::BeginDisabled(S.apkFmt != 0);
+    if (wrapButton(S.apkObb ? "[x] Sertakan OBB game##obb" : "[ ] Sertakan OBB game##obb", first, S.apkObb)) S.apkObb = !S.apkObb;
+    if (wrapButton(S.apkData ? "[x] Sertakan DATA game##dat" : "[ ] Sertakan DATA game##dat", first, S.apkData)) S.apkData = !S.apkData;
+    ImGui::EndDisabled();
+    if (S.apkFmt == 0 && S.apkData) dimWrapped("DATA bisa sangat besar dan bukan bagian standar XAPK; hanya terbaca installer yang mendukungnya.");
+    ImGui::TextColored(g_pal.dim, "Tujuan: %s", tailEllipsis(S.xapkDir, 48).c_str());
+    first = true;
+    if (wrapButton("Cari...##apk", first, !S.apkFilter.empty())) act(S.apkFilter.empty() ? "APK|FIND" : "APK|FINDX");
+    if (wrapButton(S.apkSystem ? "Sembunyikan app sistem##sys" : "Tampilkan app sistem##sys", first)) {
+        S.apkSystem = !S.apkSystem;
+        act(std::string("APK|SYS|") + (S.apkSystem ? "1" : "0"));
+    }
+    if (wrapButton(n == (int)S.apps.size() && n > 0 ? "Batal pilih##apk" : "Pilih semua##apk", first))
+        for (auto& a : S.apps) a.sel = !(n == (int)S.apps.size() && n > 0);
+    if (wrapButton("Segarkan##apk", first)) act("APK|REF");
+    ImGui::EndDisabled();
+    endPanel();
+    ImGui::PopStyleVar(2);
+
+    const bool prog = S.aBusy || S.aTotal > 0;
+    float footer = (prog ? 235.f : 120.f) * d;
+    float h = ImGui::GetContentRegionAvail().y - footer;
+    if (h < 150.f * d) h = 150.f * d;
+    ImGui::BeginChild("apk_list", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
+    if (S.apps.empty()) ImGui::TextColored(g_pal.dim, "Tidak ada aplikasi.");
+    ImGuiListClipper clip;
+    clip.Begin((int)S.apps.size());
+    while (clip.Step()) {
+        for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) {
+            Item& it = S.apps[i];
+            if (appRow(i, it, 58.f * d)) it.sel = !it.sel;
+        }
+    }
+    touchScroll();
+    ImGui::EndChild();
+
+    ImGui::TextColored(g_pal.dim, "%d aplikasi  |  %d dipilih (%s)", (int)S.apps.size(), n, fmtSize((double)sizeSel(S.apps)).c_str());
+    if (!S.aBusy) {
+        ImGui::BeginDisabled(!S.shizuku || n == 0);
+        std::string l = std::string("BACKUP ") + std::to_string(n) + " APLIKASI" + (S.apkFmt == 0 ? " KE XAPK" : "");
+        ImGui::PushStyleColor(ImGuiCol_Button, g_pal.accent);
+        ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
+        bool go = ImGui::Button(l.c_str(), ImVec2(-FLT_MIN, 54.f * d));
+        ImGui::PopStyleColor(2);
+        if (go) {
+            act("APK_GO|" + std::to_string(S.apkFmt) + "|" + std::to_string((S.apkObb ? 1 : 0) | (S.apkData ? 2 : 0)) + "|" + idxSel(S.apps));
+            S.aBusy = true; S.aDone = 0; S.aTotal = 0; S.aSpeed = 0; S.aCur = "Menyiapkan...";
+        }
+        ImGui::EndDisabled();
+    } else {
+        if (ImGui::Button("BATALKAN##apk", ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
+    }
+    progressBlock(S.aBusy, S.aDone, S.aTotal, S.aSpeed, S.aCur);
+}
+
+// ------------------------------------------------------------------ Wi-Fi
 void drawNet() {
     const float d = g_density;
-    const ImVec4 blue(0.45f, 0.75f, 1.f, 1.f), green(0.4f, 0.9f, 0.5f, 1.f), orange(1.f, 0.7f, 0.3f, 1.f);
+    const ImVec4 ok = g_pal.ok, warn = g_pal.warn, acc = g_pal.accent;
 
-    ImGui::TextColored(S.permOk ? green : orange, "%s", S.permMsg.c_str());
+    ImGui::TextColored(S.permOk ? ok : warn, "%s", S.permMsg.c_str());
     if (!S.permOk) {
         if (ImGui::Button("Berikan izin / periksa ulang", ImVec2(-FLT_MIN, 52.f * d))) act("NET_PERM");
     }
@@ -332,7 +674,7 @@ void drawNet() {
     if (toggleSwitch("##rx", S.listening)) act(S.listening ? "RX_OFF" : "RX_ON");
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(S.listening ? green : ImVec4(0.7f, 0.7f, 0.75f, 1.f), S.listening ? "Terima AKTIF - terlihat oleh perangkat lain" : "Terima MATI");
+    ImGui::TextColored(S.listening ? ok : g_pal.dim, S.listening ? "Terima AKTIF - terlihat oleh perangkat lain" : "Terima MATI");
     ImGui::TextWrapped("Folder simpan: %s", S.recvDir.empty() ? "(belum dipilih)" : S.recvDir.c_str());
     ImGui::BeginDisabled(S.listening);
     if (ImGui::Button("Ubah folder simpan")) act("BPURPOSE|2");
@@ -349,7 +691,7 @@ void drawNet() {
         ImGui::Text("PIN:");
         ImGui::SameLine();
         ImGui::SetWindowFontScale(2.2f);
-        ImGui::TextColored(orange, "%s", S.pin.c_str());
+        ImGui::TextColored(warn, "%s", S.pin.c_str());
         ImGui::SetWindowFontScale(1.f);
     }
 
@@ -361,14 +703,19 @@ void drawNet() {
     if (S.peers.empty()) ImGui::TextDisabled("Belum ada. Nyalakan Terima di perangkat lain (satu Wi-Fi).");
     else ImGui::TextDisabled("Ketuk perangkat, lalu masukkan PIN dari layarnya.");
     for (int i = 0; i < (int)S.peers.size(); i++) {
-        std::string l = "o  " + S.peers[i] + "##p" + std::to_string(i);
-        if (ImGui::Selectable(l.c_str(), false, 0, ImVec2(0, 52.f * d))) act("NET_PAIR|" + std::to_string(i));
+        ImVec2 q = ImGui::GetCursorScreenPos();
+        std::string l = "##p" + std::to_string(i);
+        bool clicked = ImGui::Selectable(l.c_str(), false, 0, ImVec2(0, 52.f * d));
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddCircleFilled(ImVec2(q.x + 14.f * d, q.y + 26.f * d), 7.f * d, ImGui::ColorConvertFloat4ToU32(ok));
+        dl->AddText(ImVec2(q.x + 34.f * d, q.y + (52.f * d - ImGui::GetFontSize()) * 0.5f), g_pal.text, S.peers[i].c_str());
+        if (clicked) act("NET_PAIR|" + std::to_string(i));
     }
 
     // ---- Terhubung
     if (!S.pairedName.empty()) {
         ImGui::SeparatorText("Terhubung");
-        ImGui::TextColored(green, "%s", S.pairedName.c_str());
+        ImGui::TextColored(ok, "%s", S.pairedName.c_str());
         ImGui::SameLine();
         ImGui::BeginDisabled(S.netBusy);
         if (ImGui::Button("Putus")) act("NET_DISCONNECT");
@@ -385,20 +732,23 @@ void drawNet() {
         if ((int)S.sendList.size() > kShow) ImGui::TextDisabled("... dan %d lainnya", (int)S.sendList.size() - kShow);
         if (!S.netBusy) {
             ImGui::BeginDisabled(S.sendList.empty());
-            if (ImGui::Button("KIRIM SEKARANG", ImVec2(-FLT_MIN, 58.f * d))) {
+            ImGui::PushStyleColor(ImGuiCol_Button, acc);
+            ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
+            if (ImGui::Button("KIRIM SEKARANG", ImVec2(-FLT_MIN, 56.f * d))) {
                 act("NET_SEND");
                 S.netBusy = true; S.netDone = 0; S.netTotal = 0; S.netSpeed = 0; S.netCur = "Menyiapkan...";
             }
+            ImGui::PopStyleColor(2);
             ImGui::EndDisabled();
         } else {
-            if (ImGui::Button("BATALKAN", ImVec2(-FLT_MIN, 58.f * d))) act("NET_CANCEL");
+            if (ImGui::Button("BATALKAN", ImVec2(-FLT_MIN, 56.f * d))) act("NET_CANCEL");
         }
     }
     ImGui::EndDisabled();
 
     progressBlock(S.netBusy, S.netDone, S.netTotal, S.netSpeed, S.netCur);
 
-    // log terakhir (selengkapnya di tab Terminal)
+    // log terakhir (selengkapnya di tab Log)
     ImGui::SeparatorText("Log terakhir");
     if (g_mono) ImGui::PushFont(g_mono);
     size_t from = S.logs.size() > 5 ? S.logs.size() - 5 : 0;
@@ -407,36 +757,11 @@ void drawNet() {
 }
 
 // ------------------------------------------------------------------ FTP (dua panel)
-struct Preset { const char* label; const char* path; };
-const Preset kPresets[] = {
-    {"Internal", "/sdcard"},
-    {"Download", "/sdcard/Download"},
-    {"DCIM", "/sdcard/DCIM"},
-    {"Pictures", "/sdcard/Pictures"},
-    {"Data", "/sdcard/Android/data"},
-    {"OBB", "/sdcard/Android/obb"},
-    {"Ngirim", "/sdcard/Ngirim"},
-};
-
-int selCount(const Pane& p) {
-    int n = 0;
-    for (auto& e : p.e) if (e.sel) n++;
-    return n;
-}
-
-std::string selIdx(const Pane& p) {
-    std::string idx;
-    for (int i = 0; i < (int)p.e.size(); i++)
-        if (p.e[i].sel) idx += (idx.empty() ? "" : ",") + std::to_string(i);
-    return idx;
-}
-
 void drawPane(int i, float w, float h) {
     const float d = g_density;
-    const ImVec4 blue(0.45f, 0.75f, 1.f, 1.f);
     Pane& P = S.pane[i];
     const bool isActive = S.active == i;
-    ImGui::PushStyleColor(ImGuiCol_Border, isActive ? ImVec4(0.45f, 0.75f, 1.f, 1.f) : ImVec4(0.28f, 0.28f, 0.33f, 1.f));
+    ImGui::PushStyleColor(ImGuiCol_Border, isActive ? g_pal.accent : ImGui::ColorConvertU32ToFloat4(g_pal.border));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, isActive ? 2.f * d : 1.f);
     std::string id = "pane" + std::to_string(i);
     ImGui::BeginChild(id.c_str(), ImVec2(w, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
@@ -445,9 +770,8 @@ void drawPane(int i, float w, float h) {
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseClicked(0)) S.active = i;
 
     if (i == 0) {
-        ImGui::TextColored(blue, "HP ini");
+        ImGui::TextColored(g_pal.accent, "HP ini");
     } else {
-        // sumber panel kanan: HP ini atau perangkat yang dipairing
         bool first = true;
         if (wrapButton("HP ini##src0", first, !P.remote)) act("FP|1|SRC|0");
         ImGui::BeginDisabled(S.pairedName.empty());
@@ -455,64 +779,52 @@ void drawPane(int i, float w, float h) {
         if (wrapButton(rl + "##src1", first, P.remote)) act("FP|1|SRC|1");
         ImGui::EndDisabled();
     }
-    ImGui::TextDisabled("%s", tailEllipsis(P.path, 30).c_str());
-    if (i == 1 && S.pairedName.empty() && !P.remote) ImGui::TextDisabled("Pairing dulu di tab Wi-Fi.");
-    if (!P.err.empty()) ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "%s", P.err.c_str());
+    ImGui::TextColored(g_pal.dim, "%s", tailEllipsis(P.path, 30).c_str());
+    if (i == 1 && S.pairedName.empty() && !P.remote) ImGui::TextColored(g_pal.dim, "Pairing dulu di tab Wi-Fi.");
+    if (!P.err.empty()) ImGui::TextColored(g_pal.err, "%s", P.err.c_str());
 
-    const int n = selCount(P);
     float lh = ImGui::GetContentRegionAvail().y - 4.f * d;
     if (lh < 60.f * d) lh = 60.f * d;
     ImGui::BeginChild((id + "_list").c_str(), ImVec2(0, lh), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-    if (P.e.empty() && P.err.empty()) ImGui::TextDisabled("Kosong");
-    const ImVec2 rowSize(0, 34.f * d);
+    if (P.e.empty() && P.err.empty()) ImGui::TextColored(g_pal.dim, "Kosong");
     ImGuiListClipper clip;
     clip.Begin((int)P.e.size());
     while (clip.Step()) {
         for (int r = clip.DisplayStart; r < clip.DisplayEnd; r++) {
             Entry& e = P.e[r];
-            ImGui::PushID(r);
-            ImGui::Checkbox("##s", &e.sel);
-            ImGui::SameLine();
-            std::string l = (e.dir ? "[DIR] " : "") + e.name;
-            if (ImGui::Selectable(l.c_str(), false, 0, rowSize)) {
+            int c = fileRow(r, e, 50.f * d, true, false);
+            if (c == 2) e.sel = !e.sel;
+            else if (c == 1) {
                 if (e.dir) act("FP|" + std::to_string(i) + "|OPEN|" + std::to_string(r));
                 else e.sel = !e.sel;
             }
-            ImGui::PopID();
         }
     }
     touchScroll();
     ImGui::EndChild();
-    (void)n;
     ImGui::EndChild();
 }
 
 void drawFtp() {
     const float d = g_density;
-    const ImVec4 blue(0.45f, 0.75f, 1.f, 1.f);
     Pane& A = S.pane[S.active];
     const std::string ai = std::to_string(S.active);
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f * d, 4.f * d));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.f * d, 6.f * d));
-    ImGui::TextColored(blue, "Panel aktif: %s", S.active == 0 ? "kiri" : "kanan");
-    bool first = true;
-    for (auto& p : kPresets)
-        if (wrapButton(std::string(p.label) + "##pr", first)) act("FP|" + ai + "|GO|" + p.path);
-    for (int i = 0; i < (int)S.bookmarks.size(); i++) {
-        std::string l = "* " + tailEllipsis(baseName(S.bookmarks[i]), 14) + "##bm" + std::to_string(i);
-        if (wrapButton(l, first)) act("FP|" + ai + "|GO|" + S.bookmarks[i]);
-    }
-
+    beginPanel("ftp_head");
+    ImGui::TextColored(g_pal.accent, "Panel aktif: %s", S.active == 0 ? "kiri" : "kanan");
+    quickAccess("FP|" + ai, A.path, false);
     bool isBm = false;
     for (auto& b : S.bookmarks) if (b == A.path) isBm = true;
-    first = true;
+    bool first = true;
     if (wrapButton("Naik", first)) act("FP|" + ai + "|UP");
     if (wrapButton("Segarkan", first)) act("FP|" + ai + "|REF");
     ImGui::BeginDisabled(A.remote);
     if (wrapButton("Folder baru", first)) act("FP_MKDIR|" + ai);
     ImGui::EndDisabled();
-    if (wrapButton(isBm ? "Hapus pintasan" : "Simpan pintasan", first)) act("BM|" + A.path);
+    if (wrapButton(isBm ? "Lepas sematan" : "Sematkan folder", first)) act("BM|" + A.path);
+    endPanel();
     ImGui::PopStyleVar(2);
 
     const bool remote = S.pane[1].remote;
@@ -527,7 +839,7 @@ void drawFtp() {
     ImGui::SameLine();
     drawPane(1, w, h);
 
-    const int nL = selCount(S.pane[0]), nR = selCount(S.pane[1]);
+    const int nL = countSel(S.pane[0].e), nR = countSel(S.pane[1].e);
     ImGui::BeginDisabled(S.fBusy);
     ImGui::RadioButton("Salin", &S.fMove, 0);
     ImGui::SameLine();
@@ -535,82 +847,129 @@ void drawFtp() {
     ImGui::RadioButton("Pindah", &S.fMove, 1);
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextDisabled("Dipilih: kiri %d, kanan %d", nL, nR);
+    ImGui::TextColored(g_pal.dim, "Dipilih: kiri %d, kanan %d", nL, nR);
     ImGui::EndDisabled();
 
     if (!S.fBusy) {
         const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
         ImGui::BeginDisabled(!S.shizuku || nL == 0);
         if (ImGui::Button("Kiri  >>  Kanan", ImVec2(bw, 50.f * d))) {
-            act("FP_XFER|0|" + std::to_string(S.fMove) + "|" + selIdx(S.pane[0]));
+            act("FP_XFER|0|" + std::to_string(S.fMove) + "|" + idxSel(S.pane[0].e));
             S.fBusy = true; S.fDone = 0; S.fTotal = 0; S.fSpeed = 0; S.fCur = "Menyiapkan...";
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!S.shizuku || nR == 0);
-        if (ImGui::Button("Kiri  <<  Kanan", ImVec2(-FLT_MIN, 54.f * d))) {
-            act("FP_XFER|1|" + std::to_string(S.fMove) + "|" + selIdx(S.pane[1]));
+        if (ImGui::Button("Kiri  <<  Kanan", ImVec2(-FLT_MIN, 50.f * d))) {
+            act("FP_XFER|1|" + std::to_string(S.fMove) + "|" + idxSel(S.pane[1].e));
             S.fBusy = true; S.fDone = 0; S.fTotal = 0; S.fSpeed = 0; S.fCur = "Menyiapkan...";
         }
         ImGui::EndDisabled();
     } else {
-        if (ImGui::Button("BATALKAN", ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
+        if (ImGui::Button("BATALKAN##ftp", ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
     }
     progressBlock(S.fBusy, S.fDone, S.fTotal, S.fSpeed, S.fCur);
 }
 
-// ------------------------------------------------------------------ file browser
+// ------------------------------------------------------------------ Pengaturan
+void settingToggle(const char* id, const char* label, const char* sub, bool on, const std::string& key) {
+    const float d = g_density;
+    ImVec2 q = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImGui::BeginGroup();
+    bool clicked = toggleSwitch(id, on);
+    ImGui::EndGroup();
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::TextWrapped("%s", label);
+    if (sub && *sub) dimWrapped(sub);
+    ImGui::EndGroup();
+    (void)q; (void)w; (void)d;
+    if (clicked) act("SET|" + key + "|" + (on ? "0" : "1"));
+}
+
+void drawSettings() {
+    const float d = g_density;
+
+    ImGui::SeparatorText("Tampilan");
+    {
+        bool first = true;
+        if (wrapButton("Terang##th", first, !S.dark)) { S.dark = false; applyTheme(false); act("SET|theme|0"); }
+        if (wrapButton("Gelap##th", first, S.dark)) { S.dark = true; applyTheme(true); act("SET|theme|1"); }
+    }
+
+    ImGui::SeparatorText("File manager");
+    settingToggle("##hid", "Tampilkan file tersembunyi", "Nama berawalan titik (.)", S.showHidden, "hidden");
+    ImGui::Spacing();
+    settingToggle("##trash", "Gunakan tempat sampah", "Hapus memindahkan ke /sdcard/Ngirim/.Sampah (Android/data dan OBB dihapus permanen)", S.useTrash, "trash");
+    if (ImGui::Button("Buka tempat sampah")) act("TRASH_OPEN");
+    ImGui::SameLine();
+    if (ImGui::Button("Kosongkan sampah")) act("TRASH_EMPTY");
+
+    ImGui::SeparatorText("Backup APK");
+    ImGui::TextWrapped("Folder hasil: %s", S.xapkDir.c_str());
+    if (ImGui::Button("Ubah folder hasil")) act("BPURPOSE|5");
+
+    ImGui::SeparatorText("Jaringan");
+    ImGui::TextWrapped("Nama perangkat: %s", S.devName.c_str());
+    if (ImGui::Button("Ubah nama perangkat")) act("SET_NAME");
+    dimWrapped("Nama baru dipakai saat Terima dinyalakan ulang.");
+
+    ImGui::SeparatorText("Shizuku");
+    ImGui::TextColored(S.shizuku ? g_pal.ok : g_pal.err, "%s", S.shizukuMsg.c_str());
+    if (ImGui::Button("Hubungkan ulang")) act("CONNECT");
+    ImGui::SameLine();
+    if (ImGui::Button("Buka app Shizuku")) act("OPEN_SHIZUKU");
+
+    ImGui::SeparatorText("Tentang");
+    ImGui::Text("Ngirim %s", kVersion);
+    dimWrapped("Transfer file, backup APK/XAPK, dan file manager lewat Shizuku.");
+
+    ImGui::SeparatorText("Riwayat perubahan");
+    for (const char* l : kChangelog) {
+        if (!*l) ImGui::Spacing();
+        else if (l[0] == 'v') ImGui::TextColored(g_pal.accent, "%s", l);
+        else ImGui::TextWrapped("%s", l);
+    }
+    ImGui::Dummy(ImVec2(0, 24.f * d));
+}
+
+// ------------------------------------------------------------------ file browser (pilih file/folder)
 void drawBrowser() {
     const float d = g_density;
     const int P = S.bPurpose;
     const char* title = P == 1 ? "Pilih file / folder untuk dikirim"
-                      : P == 2 ? "Pilih folder penyimpanan"
-                      : P == 3 ? "Pilih folder sumber" : "Pilih folder tujuan";
-    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.f, 1.f), "%s", title);
+                      : P == 2 ? "Pilih folder penyimpanan terima"
+                      : "Pilih folder hasil backup XAPK";
+    ImGui::TextColored(g_pal.accent, "%s", title);
     ImGui::TextWrapped("%s", S.bPath.c_str());
-    if (ImGui::Button("Naik")) act("BUP");
-    ImGui::SameLine();
-    if (ImGui::Button("Folder baru")) act("BNEWDIR");
-    ImGui::SameLine();
-    if (ImGui::Button("Tutup")) act("BCLOSE");
-    if (ImGui::Button("Internal")) act("BGO|/sdcard");
-    ImGui::SameLine();
-    if (ImGui::Button("Download")) act("BGO|/sdcard/Download");
-    ImGui::SameLine();
-    if (ImGui::Button("Data")) act("BGO|/sdcard/Android/data");
-    ImGui::SameLine();
-    if (ImGui::Button("OBB")) act("BGO|/sdcard/Android/obb");
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f * d, 4.f * d));
+    bool first = true;
+    if (wrapButton("Naik", first)) act("BUP");
+    if (wrapButton("Folder baru", first)) act("BNEWDIR");
+    if (wrapButton("Tutup", first)) act("BCLOSE");
+    if (wrapButton("Internal", first)) act("BGO|/sdcard");
+    if (wrapButton("Download", first)) act("BGO|/sdcard/Download");
+    if (wrapButton("Data", first)) act("BGO|/sdcard/Android/data");
+    if (wrapButton("OBB", first)) act("BGO|/sdcard/Android/obb");
+    ImGui::PopStyleVar();
 
-    int n = 0;
-    for (auto& e : S.bEntries) if (e.sel) n++;
-
+    int n = countSel(S.bEntries);
     float h = ImGui::GetContentRegionAvail().y - 75.f * d;
     if (h < 100.f * d) h = 100.f * d;
     ImGui::BeginChild("blist", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
-    if (S.bEntries.empty()) ImGui::TextDisabled("Folder kosong / tidak bisa dibaca.");
-    const ImVec2 rowSize(0, 44.f * d);
+    if (S.bEntries.empty()) ImGui::TextColored(g_pal.dim, "Folder kosong / tidak bisa dibaca.");
     ImGuiListClipper clip;
     clip.Begin((int)S.bEntries.size());
     while (clip.Step()) {
         for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) {
             Entry& e = S.bEntries[i];
-            ImGui::PushID(i);
-            if (P == 1) {
-                ImGui::Checkbox("##sel", &e.sel);
-                ImGui::SameLine();
+            int r = fileRow(i, e, 50.f * d, P == 1, false);
+            if (r == 2) e.sel = !e.sel;
+            else if (r == 1) {
+                if (e.dir) act("BOPEN|" + std::to_string(i));
+                else if (P == 1) e.sel = !e.sel;
             }
-            if (e.dir) {
-                std::string l = "[DIR] " + e.name;
-                if (ImGui::Selectable(l.c_str(), false, 0, rowSize)) act("BOPEN|" + std::to_string(i));
-            } else {
-                std::string l = e.name + "  [" + fmtSize((double)e.size) + "]";
-                if (P == 1) {
-                    if (ImGui::Selectable(l.c_str(), false, 0, rowSize)) e.sel = !e.sel;
-                } else {
-                    ImGui::Selectable(l.c_str(), false, ImGuiSelectableFlags_Disabled, rowSize);
-                }
-            }
-            ImGui::PopID();
         }
     }
     touchScroll();
@@ -619,34 +978,45 @@ void drawBrowser() {
     if (P == 1) {
         std::string l = "Tambahkan " + std::to_string(n) + " item";
         ImGui::BeginDisabled(n == 0);
-        if (ImGui::Button(l.c_str(), ImVec2(-FLT_MIN, 58.f * d))) {
-            std::string idx;
-            for (int i = 0; i < (int)S.bEntries.size(); i++)
-                if (S.bEntries[i].sel) idx += (idx.empty() ? "" : ",") + std::to_string(i);
-            act("BFILES|" + idx);
-        }
+        if (ImGui::Button(l.c_str(), ImVec2(-FLT_MIN, 56.f * d))) act("BFILES|" + idxSel(S.bEntries));
         ImGui::EndDisabled();
     } else {
-        if (ImGui::Button("PILIH FOLDER INI", ImVec2(-FLT_MIN, 58.f * d))) act("BDIR");
+        if (ImGui::Button("PILIH FOLDER INI", ImVec2(-FLT_MIN, 56.f * d))) act("BDIR");
     }
 }
 
+// ------------------------------------------------------------------ root
 void drawUI() {
+    const float d = g_density;
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f * d, 0.f));
     ImGui::Begin("##root", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
                  ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
 
-    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.f, 1.f), "Ngirim");
-    ImGui::SameLine();
-    ImGui::TextDisabled("v1.0");
-    if (S.shizuku) {
-        ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.f), "%s", S.shizukuMsg.c_str());
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.5f, 0.4f, 1.f));
+    // title bar aksen ala Windows 10
+    const float barH = 46.f * d;
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImVec2(0, 0), ImVec2(io.DisplaySize.x, barH), ImGui::ColorConvertFloat4ToU32(g_pal.accent));
+        const float th = ImGui::GetTextLineHeight();
+        const ImU32 white = IM_COL32(255, 255, 255, 255);
+        dl->AddText(ImVec2(10.f * d, (barH - th) * 0.5f), white, "Ngirim");
+        dl->AddText(ImVec2(10.f * d + ImGui::CalcTextSize("Ngirim ").x, (barH - th) * 0.5f), IM_COL32(255, 255, 255, 190), kVersion);
+        const char* st = S.shizuku ? "Shizuku" : "Shizuku terputus";
+        ImVec2 ts = ImGui::CalcTextSize(st);
+        float x = io.DisplaySize.x - ts.x - 14.f * d;
+        dl->AddText(ImVec2(x, (barH - th) * 0.5f), white, st);
+        dl->AddCircleFilled(ImVec2(x - 12.f * d, barH * 0.5f), 6.f * d, S.shizuku ? IM_COL32(120, 255, 140, 255) : IM_COL32(255, 120, 100, 255));
+    }
+    ImGui::SetCursorPosY(barH + 8.f * d);
+
+    if (!S.shizuku) {
+        ImGui::PushStyleColor(ImGuiCol_Text, g_pal.err);
         ImGui::TextWrapped("%s", S.shizukuMsg.c_str());
         ImGui::PopStyleColor();
         if (ImGui::Button("Hubungkan Shizuku")) act("CONNECT");
@@ -654,46 +1024,84 @@ void drawUI() {
         if (ImGui::Button("Buka app Shizuku")) act("OPEN_SHIZUKU");
     }
 
+    if (S.tabReq >= 0) S.apkOpen = false;
     if (S.bOpen) {
         drawBrowser();
+    } else if (S.apkOpen) {
+        drawApk();
     } else if (ImGui::BeginTabBar("tabs")) {
-        if (ImGui::BeginTabItem("Lokal")) {
-            ImGui::BeginChild("t_local", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
-            drawTransfer();
-            touchScroll();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Wi-Fi")) {
+        auto flag = [&](int idx) { return S.tabReq == idx ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None; };
+        if (ImGui::BeginTabItem("Lokal", nullptr, flag(0))) { drawFiles(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Wi-Fi", nullptr, flag(1))) {
             ImGui::BeginChild("t_net", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
             drawNet();
             touchScroll();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("FTP")) {
-            drawFtp();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Terminal")) {
-            drawTerminal("term_main", ImGui::GetContentRegionAvail().y);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Changelog")) {
-            ImGui::BeginChild("chg", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
-            for (const char* l : kChangelog) {
-                if (!*l) ImGui::Spacing();
-                else ImGui::TextWrapped("%s", l);
-            }
+        if (ImGui::BeginTabItem("FTP", nullptr, flag(2))) { drawFtp(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Pengaturan", nullptr, flag(3))) {
+            ImGui::BeginChild("t_set", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
+            drawSettings();
             touchScroll();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Log", nullptr, flag(4))) {
+            if (ImGui::Button("Bersihkan log")) { S.logs.clear(); }
+            drawTerminal("term_main", ImGui::GetContentRegionAvail().y);
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
+        S.tabReq = -1;
     }
     ImGui::End();
 }
 
+}  // namespace
+
+namespace {
+bool g_themeDirty = false;
+
+std::vector<std::string> jstrings(JNIEnv* e, jobjectArray arr) {
+    std::vector<std::string> v;
+    jsize n = arr ? e->GetArrayLength(arr) : 0;
+    for (jsize i = 0; i < n; i++) {
+        jstring s = (jstring)e->GetObjectArrayElement(arr, i);
+        v.push_back(js(e, s));
+        e->DeleteLocalRef(s);
+    }
+    return v;
+}
+
+std::vector<Entry> jentries(JNIEnv* e, jobjectArray names, jlongArray sizes, jbooleanArray dirs, jlongArray mtimes) {
+    std::vector<Entry> v;
+    auto n = jstrings(e, names);
+    jlong* sz = e->GetLongArrayElements(sizes, nullptr);
+    jboolean* dr = e->GetBooleanArrayElements(dirs, nullptr);
+    jlong* mt = mtimes ? e->GetLongArrayElements(mtimes, nullptr) : nullptr;
+    for (size_t i = 0; i < n.size(); i++) {
+        Entry en; en.name = n[i]; en.size = sz[i]; en.dir = dr[i]; en.mtime = mt ? mt[i] : 0;
+        v.push_back(std::move(en));
+    }
+    e->ReleaseLongArrayElements(sizes, sz, JNI_ABORT);
+    e->ReleaseBooleanArrayElements(dirs, dr, JNI_ABORT);
+    if (mt) e->ReleaseLongArrayElements(mtimes, mt, JNI_ABORT);
+    return v;
+}
+
+std::vector<Item> jitems(JNIEnv* e, jobjectArray names, jobjectArray subs, jlongArray sizes) {
+    std::vector<Item> v;
+    auto n = jstrings(e, names);
+    auto s2 = subs ? jstrings(e, subs) : std::vector<std::string>();
+    jlong* sz = e->GetLongArrayElements(sizes, nullptr);
+    for (size_t i = 0; i < n.size(); i++) {
+        Item it; it.name = n[i]; it.size = sz[i]; if (i < s2.size()) it.sub = s2[i];
+        v.push_back(std::move(it));
+    }
+    e->ReleaseLongArrayElements(sizes, sz, JNI_ABORT);
+    return v;
+}
 }  // namespace
 
 extern "C" {
@@ -705,14 +1113,22 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_initGl(JNIEnv*, jclass, jfloat
         g_ctx = ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
-        ImGui::StyleColorsDark();
+        ImGui::StyleColorsLight();
         ImGuiStyle& st = ImGui::GetStyle();
-        st.WindowRounding = 0; st.FrameRounding = 8; st.ChildRounding = 8;
-        st.GrabRounding = 8; st.TabRounding = 8;
-        st.FramePadding = ImVec2(12, 10);
-        st.ItemSpacing = ImVec2(10, 12);
+        // gaya Windows 10: datar, sudut tajam, tombol berbingkai tipis
+        st.WindowRounding = 0; st.FrameRounding = 0; st.ChildRounding = 0;
+        st.GrabRounding = 0; st.TabRounding = 0; st.ScrollbarRounding = 0; st.PopupRounding = 0;
+        st.FrameBorderSize = 1.f; st.ChildBorderSize = 1.f; st.WindowBorderSize = 0.f; st.TabBorderSize = 0.f;
+        st.TabBarOverlineSize = 3.f;
+        st.FramePadding = ImVec2(10, 8);
+        st.ItemSpacing = ImVec2(8, 10);
         st.ScrollbarSize = 6;
+        st.SeparatorTextBorderSize = 1.f;
         st.ScaleAllSizes(density);
+        {
+            std::lock_guard<std::mutex> lk(S.mu);
+            applyTheme(S.dark);
+        }
 
         float px = 15.f * density;
         const char* font = "/system/fonts/Roboto-Regular.ttf";
@@ -739,6 +1155,10 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_render(JNIEnv*, jclass, jint w
     io.DeltaTime = dt > 0 ? dt : 1.f / 60.f;
 
     applyTouchEvents();
+    {
+        std::lock_guard<std::mutex> lk(S.mu);
+        if (g_themeDirty) { applyTheme(S.dark); g_themeDirty = false; }
+    }
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
     {
@@ -764,48 +1184,10 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_touch(JNIEnv*, jclass, jint ac
 }
 
 JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setShizuku(JNIEnv* e, jclass, jboolean ok, jstring msg) {
+    std::string m = js(e, msg);
     std::lock_guard<std::mutex> lk(S.mu);
     S.shizuku = ok;
-    S.shizukuMsg = js(e, msg);
-}
-
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setRoutes(JNIEnv* e, jclass, jobjectArray names) {
-    std::lock_guard<std::mutex> lk(S.mu);
-    S.routes.clear();
-    jsize n = e->GetArrayLength(names);
-    for (jsize i = 0; i < n; i++) {
-        jstring s = (jstring)e->GetObjectArrayElement(names, i);
-        S.routes.push_back(js(e, s));
-        e->DeleteLocalRef(s);
-    }
-}
-
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setItems(JNIEnv* e, jclass, jobjectArray names, jlongArray sizes) {
-    std::vector<Item> v;
-    jsize n = e->GetArrayLength(names);
-    jlong* sz = e->GetLongArrayElements(sizes, nullptr);
-    for (jsize i = 0; i < n; i++) {
-        jstring s = (jstring)e->GetObjectArrayElement(names, i);
-        Item it; it.name = js(e, s); it.size = sz[i];
-        v.push_back(std::move(it));
-        e->DeleteLocalRef(s);
-    }
-    e->ReleaseLongArrayElements(sizes, sz, JNI_ABORT);
-    std::lock_guard<std::mutex> lk(S.mu);
-    S.items = std::move(v);
-}
-
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
-                                                              jlong total, jdouble speed, jstring cur) {
-    std::string c = js(e, cur);
-    std::lock_guard<std::mutex> lk(S.mu);
-    S.busy = busy; S.done = done; S.total = total; S.speed = speed; S.cur = c;
-}
-
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setCustom(JNIEnv* e, jclass, jstring src, jstring dst) {
-    std::string a = js(e, src), b = js(e, dst);
-    std::lock_guard<std::mutex> lk(S.mu);
-    S.customSrc = a; S.customDst = b;
+    S.shizukuMsg = m;
 }
 
 JNIEXPORT void JNICALL Java_com_ngirim_app_Native_log(JNIEnv* e, jclass, jstring msg) {
@@ -829,6 +1211,57 @@ JNIEXPORT jstring JNICALL Java_com_ngirim_app_Native_pollAction(JNIEnv* e, jclas
     return e->NewStringUTF(a.c_str());
 }
 
+JNIEXPORT void JNICALL Java_com_ngirim_app_Native_selectTab(JNIEnv*, jclass, jint idx) {
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.tabReq = idx;
+}
+
+JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setSettings(JNIEnv* e, jclass, jboolean dark, jboolean hidden,
+                                                              jboolean trash, jstring xapkDir, jstring devName) {
+    std::string x = js(e, xapkDir), n = js(e, devName);
+    std::lock_guard<std::mutex> lk(S.mu);
+    if (S.dark != (bool)dark) g_themeDirty = true;
+    S.dark = dark; S.showHidden = hidden; S.useTrash = trash; S.xapkDir = x; S.devName = n;
+}
+
+// ---- file manager
+JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setFm(JNIEnv* e, jclass, jstring path, jstring err, jstring filter,
+                                                        jint sort, jboolean asc, jobjectArray names, jlongArray sizes,
+                                                        jbooleanArray dirs, jlongArray mtimes) {
+    std::string p = js(e, path), er = js(e, err), f = js(e, filter);
+    auto v = jentries(e, names, sizes, dirs, mtimes);
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.fmPath = p; S.fmErr = er; S.fmFilter = f; S.fmSort = sort; S.fmAsc = asc; S.fm = std::move(v);
+}
+
+JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setClip(JNIEnv*, jclass, jint count, jboolean cut) {
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.clipCount = count; S.clipCut = cut;
+}
+
+JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setFmProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
+                                                                jlong total, jdouble speed, jstring cur) {
+    std::string c = js(e, cur);
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.mBusy = busy; S.mDone = done; S.mTotal = total; S.mSpeed = speed; S.mCur = c;
+}
+
+// ---- APK
+JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setApps(JNIEnv* e, jclass, jstring filter, jobjectArray names,
+                                                          jobjectArray subs, jlongArray sizes) {
+    std::string f = js(e, filter);
+    auto v = jitems(e, names, subs, sizes);
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.apkFilter = f; S.apps = std::move(v);
+}
+
+JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setApkProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
+                                                                 jlong total, jdouble speed, jstring cur) {
+    std::string c = js(e, cur);
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.aBusy = busy; S.aDone = done; S.aTotal = total; S.aSpeed = speed; S.aCur = c;
+}
+
 // ---- jaringan
 JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setNetPerm(JNIEnv* e, jclass, jboolean ok, jstring msg) {
     std::string m = js(e, msg);
@@ -837,13 +1270,7 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setNetPerm(JNIEnv* e, jclass, 
 }
 
 JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setPeers(JNIEnv* e, jclass, jobjectArray names) {
-    std::vector<std::string> v;
-    jsize n = e->GetArrayLength(names);
-    for (jsize i = 0; i < n; i++) {
-        jstring s = (jstring)e->GetObjectArrayElement(names, i);
-        v.push_back(js(e, s));
-        e->DeleteLocalRef(s);
-    }
+    auto v = jstrings(e, names);
     std::lock_guard<std::mutex> lk(S.mu);
     S.peers = std::move(v);
 }
@@ -856,16 +1283,7 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setNetInfo(JNIEnv* e, jclass, 
 }
 
 JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setSendList(JNIEnv* e, jclass, jobjectArray names, jlongArray sizes) {
-    std::vector<Item> v;
-    jsize n = e->GetArrayLength(names);
-    jlong* sz = e->GetLongArrayElements(sizes, nullptr);
-    for (jsize i = 0; i < n; i++) {
-        jstring s = (jstring)e->GetObjectArrayElement(names, i);
-        Item it; it.name = js(e, s); it.size = sz[i];
-        v.push_back(std::move(it));
-        e->DeleteLocalRef(s);
-    }
-    e->ReleaseLongArrayElements(sizes, sz, JNI_ABORT);
+    auto v = jitems(e, names, nullptr, sizes);
     std::lock_guard<std::mutex> lk(S.mu);
     S.sendList = std::move(v);
 }
@@ -880,53 +1298,26 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setNetProgress(JNIEnv* e, jcla
 JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setBrowser(JNIEnv* e, jclass, jboolean open, jint purpose,
                                                              jstring path, jobjectArray names, jlongArray sizes,
                                                              jbooleanArray dirs) {
-    std::vector<Entry> v;
     std::string p = js(e, path);
-    jsize n = e->GetArrayLength(names);
-    jlong* sz = e->GetLongArrayElements(sizes, nullptr);
-    jboolean* dr = e->GetBooleanArrayElements(dirs, nullptr);
-    for (jsize i = 0; i < n; i++) {
-        jstring s = (jstring)e->GetObjectArrayElement(names, i);
-        Entry en; en.name = js(e, s); en.size = sz[i]; en.dir = dr[i];
-        v.push_back(std::move(en));
-        e->DeleteLocalRef(s);
-    }
-    e->ReleaseLongArrayElements(sizes, sz, JNI_ABORT);
-    e->ReleaseBooleanArrayElements(dirs, dr, JNI_ABORT);
+    auto v = jentries(e, names, sizes, dirs, nullptr);
     std::lock_guard<std::mutex> lk(S.mu);
     S.bOpen = open; S.bPurpose = purpose; S.bPath = p; S.bEntries = std::move(v);
 }
 
+// ---- FTP
 JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setPane(JNIEnv* e, jclass, jint idx, jstring path, jboolean remote,
                                                           jstring err, jobjectArray names, jlongArray sizes,
                                                           jbooleanArray dirs) {
     if (idx < 0 || idx > 1) return;
-    std::vector<Entry> v;
     std::string p = js(e, path), er = js(e, err);
-    jsize n = e->GetArrayLength(names);
-    jlong* sz = e->GetLongArrayElements(sizes, nullptr);
-    jboolean* dr = e->GetBooleanArrayElements(dirs, nullptr);
-    for (jsize i = 0; i < n; i++) {
-        jstring s = (jstring)e->GetObjectArrayElement(names, i);
-        Entry en; en.name = js(e, s); en.size = sz[i]; en.dir = dr[i];
-        v.push_back(std::move(en));
-        e->DeleteLocalRef(s);
-    }
-    e->ReleaseLongArrayElements(sizes, sz, JNI_ABORT);
-    e->ReleaseBooleanArrayElements(dirs, dr, JNI_ABORT);
+    auto v = jentries(e, names, sizes, dirs, nullptr);
     std::lock_guard<std::mutex> lk(S.mu);
     Pane& P = S.pane[idx];
     P.path = p; P.err = er; P.remote = remote; P.e = std::move(v);
 }
 
 JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setBookmarks(JNIEnv* e, jclass, jobjectArray paths) {
-    std::vector<std::string> v;
-    jsize n = e->GetArrayLength(paths);
-    for (jsize i = 0; i < n; i++) {
-        jstring s = (jstring)e->GetObjectArrayElement(paths, i);
-        v.push_back(js(e, s));
-        e->DeleteLocalRef(s);
-    }
+    auto v = jstrings(e, paths);
     std::lock_guard<std::mutex> lk(S.mu);
     S.bookmarks = std::move(v);
 }

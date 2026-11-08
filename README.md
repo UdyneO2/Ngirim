@@ -4,20 +4,22 @@ Aplikasi Android untuk transfer file, APK, foto, dan data game (`/sdcard/Android
 `/sdcard/Android/data`), lokal maupun ke perangkat lain lewat Wi-Fi yang sama.
 Akses file memakai **Shizuku** (tanpa root, tanpa SAF), UI memakai **Dear ImGui** (OpenGL ES 3).
 
-Versi saat ini: **v1.0** (final) (lihat [CHANGELOG.md](CHANGELOG.md)).
+Versi saat ini: **v2.0** (lihat [CHANGELOG.md](CHANGELOG.md)).
 
 ## Fitur
 
-- **Lokal**: backup/restore APK (termasuk split APK), foto, OBB dan DATA game, plus rute **Kustom**
-  (pilih folder sumber dan tujuan sendiri). Mode Salin atau Pindah.
-- **Wi-Fi (antar perangkat)**: kirim/terima file dan **folder** lewat jaringan yang sama.
-- **FTP (dua panel)**: tab FTP menampilkan dua folder berdampingan dengan pintasan folder; panel kanan bisa
-  diarahkan ke perangkat lain yang sudah dipairing untuk menjelajah, mengambil, dan mengirim file dua arah.
-- **File browser bawaan**: pilih file atau folder di mana saja, termasuk `Android/data` dan `Android/obb`,
-  buat folder baru, dan tentukan folder penyimpanan penerima.
-- **Live progress**: persen, ukuran, kecepatan, ETA, dan file yang sedang diproses.
-- **Terminal**: log bergaya terminal dengan timestamp dan warna (OK hijau, ERR merah).
-- Verifikasi ukuran file (lokal), batalkan kapan saja, file parsial otomatis dihapus.
+- **Antarmuka bergaya Windows 10**: kontrol datar, aksen biru, tema Terang atau Gelap (Pengaturan).
+- **Lokal = file manager**: salin, potong, tempel, hapus (ke tempat sampah), ganti nama, folder baru, properti,
+  urutkan, cari, tampilkan file tersembunyi, dan **akses cepat** ke folder (Internal, Download, DCIM, Pictures,
+  Data, OBB, Ngirim, plus folder yang Anda sematkan). Bisa masuk ke `Android/data` dan `Android/obb` lewat Shizuku.
+- **Backup APK ke XAPK**: tombol *Backup APK* di tab Lokal membuka pemilih aplikasi (cari, centang banyak).
+  Hasilnya satu file `.xapk` (manifest.json, ikon, base + split APK) dengan opsi OBB dan DATA game.
+- **Wi-Fi (antar perangkat)**: saklar Terima, daftar perangkat aktif otomatis, kirim file dan **folder** dengan PIN.
+- **FTP (dua panel)**: dua folder berdampingan; panel kanan bisa diarahkan ke perangkat yang sudah dipairing.
+- **Pengaturan**: tema, file tersembunyi, tempat sampah, folder hasil XAPK, nama perangkat, status Shizuku,
+  dan riwayat perubahan di bagian bawah.
+- **Log**: log bergaya terminal dengan timestamp dan warna (OK hijau, ERR merah), setelah tab Pengaturan.
+- Live progress (persen, ukuran, kecepatan, ETA), batalkan kapan saja, file parsial otomatis dihapus.
 
 ## Persyaratan
 
@@ -28,12 +30,20 @@ Versi saat ini: **v1.0** (final) (lihat [CHANGELOG.md](CHANGELOG.md)).
 
 ## Cara pakai
 
-### Transfer lokal (tab Lokal)
+### File manager (tab Lokal)
 1. Buka Ngirim, pastikan status Shizuku hijau (ketuk **Hubungkan Shizuku** lalu izinkan jika perlu).
-2. Pilih rute, centang item, pilih **Salin** atau **Pindah**, lalu **MULAI TRANSFER**.
-3. Rute **Kustom**: ketuk **Pilih sumber** dan **Pilih tujuan**, lalu centang folder/file di sumber.
+2. Ketuk folder untuk masuk, atau pakai *Akses cepat* dan *Naik*. Ketuk kotak centang untuk memilih.
+3. **Salin** atau **Potong**, pindah ke folder tujuan, lalu **Tempel**. **Hapus** memindahkan ke
+   `/sdcard/Ngirim/.Sampah` (bisa dimatikan di Pengaturan; isi `Android/data` dan `Android/obb` dihapus permanen).
+4. **Sematkan folder ini** menambahkan pintasan favorit. **Kirim** memasukkan item terpilih ke daftar kirim Wi-Fi.
 
-Hasil backup tersimpan di `/sdcard/Ngirim/{APK,Foto,obb,data}`.
+### Backup APK ke XAPK
+1. Di tab Lokal ketuk **Backup APK**, pilih format (XAPK atau APK + split dalam folder).
+2. Centang aplikasi (*Tampilkan app sistem* bila perlu). Opsional: **Sertakan OBB** dan **Sertakan DATA game**.
+3. Ketuk **BACKUP ... KE XAPK**. Hasil di `/sdcard/Ngirim/XAPK` (ubah di Pengaturan).
+
+DATA bukan bagian standar XAPK; berkas disimpan di `Android/data/<paket>/` dalam arsip dan dicantumkan di
+`expansions` pada manifest. Batas ZIP 4 GB berlaku.
 
 ### Transfer lewat Wi-Fi (tab Wi-Fi)
 1. **Izin**: bila status belum hijau, ketuk *Berikan izin / periksa ulang*.
@@ -104,7 +114,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v1.0 && git push origin v1.0` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v2.0 && git push origin v2.0` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.

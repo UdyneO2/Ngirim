@@ -3,9 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Versi bisa di-override dari CI: -PversionName=1.0 -PversionCode=12
-val vName = (project.findProperty("versionName") as String?) ?: "1.0"
-val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 4
+// Versi bisa di-override dari CI: -PversionName=2.0 -PversionCode=12
+val vName = (project.findProperty("versionName") as String?) ?: "2.0"
+val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 5
 
 android {
     namespace = "com.ngirim.app"
