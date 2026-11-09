@@ -1,6 +1,6 @@
-package com.ngirim.app;
+package com.udyneos.ngirim;
 
-import com.ngirim.app.IProgressCallback;
+import com.udyneos.ngirim.IProgressCallback;
 
 interface IFileService {
     void destroy() = 16777114;
@@ -27,4 +27,7 @@ interface IFileService {
     long pathSize(String path) = 17;                     // rekursif
     // Backup XAPK: tiap elemen = satu job JSON (lihat FileService.doXapk)
     void backupXapk(in String[] jobs, IProgressCallback cb) = 18;
+    // Pasang APK senyap lewat `pm install` (uid shell) dan ekstrak ZIP
+    void installApk(in String[] paths, IProgressCallback cb) = 19;
+    void unzip(String zip, String destDir, IProgressCallback cb) = 20;
 }

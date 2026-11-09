@@ -1,4 +1,4 @@
-package com.ngirim.app
+package com.udyneos.ngirim
 
 import android.util.Base64
 import org.json.JSONArray
@@ -556,6 +556,73 @@ class FileService : IFileService.Stub() {
 
     // ---------------------------------------------------------------- backup XAPK
     override fun backupXapk(jobs: Array<String>, cb: IProgressCallback) = startClient(cb) { doXapk(jobs, cb) }
+
+    // ---------------------------------------------------------------- pasang APK + ekstrak ZIP
+    override fun installApk(paths: Array<String>, cb: IProgressCallback) {
+        Thread {
+            var ok = 0
+            var failed = 0
+            for (p in paths) {
+                try {
+                    // Isi APK dialirkan lewat stdin (-S) agar `pm` tidak perlu akses ke path-nya
+                    val f = File(p)
+                    val pr = ProcessBuilder("pm", "install", "-r", "-S", f.length().toString()).redirectErrorStream(true).start()
+                    Thread {
+                        try { pr.outputStream.use { os -> FileInputStream(f).use { it.copyTo(os, 1 shl 16) } } } catch (_: Throwable) {}
+                    }.start()
+                    val out = pr.inputStream.bufferedReader().readText().trim()
+                    val code = pr.waitFor()
+                    if (code == 0 && out.contains("Success", ignoreCase = true)) {
+                        ok++; log(cb, "OK     terpasang ${File(p).name}")
+                    } else {
+                        failed++; log(cb, "GAGAL  ${File(p).name}: ${out.lines().lastOrNull { it.isNotBlank() } ?: "kode $code"}")
+                    }
+                } catch (t: Throwable) {
+                    failed++; log(cb, "GAGAL  ${File(p).name}: ${t.message}")
+                }
+            }
+            finish(cb, failed == 0, "Pasang APK: $ok berhasil, $failed gagal", ok.toLong(), paths.size.toLong())
+        }.start()
+    }
+
+    override fun unzip(zip: String, destDir: String, cb: IProgressCallback) = startClient(cb) { doUnzip(zip, destDir, cb) }
+
+    private fun doUnzip(zip: String, destDir: String, cb: IProgressCallback) {
+        val src = File(zip)
+        val target = uniqueFile(File(destDir, src.nameWithoutExtension.ifEmpty { "arsip" }))
+        target.mkdirs()
+        val root = target.canonicalPath
+        java.util.zip.ZipFile(src).use { zf ->
+            val entries = zf.entries().toList()
+            val total = entries.sumOf { it.size.coerceAtLeast(0L) }
+            var done = 0L
+            var n = 0
+            var last = 0L
+            val buf = ByteArray(1 shl 16)
+            for (e in entries) {
+                if (cancelled) throw InterruptedException("cancel")
+                val out = File(target, e.name)
+                if (!out.canonicalPath.startsWith(root + File.separator) && out.canonicalPath != root)
+                    throw IOException("entri tidak aman: ${e.name}")
+                if (e.isDirectory) { out.mkdirs(); continue }
+                out.parentFile?.mkdirs()
+                zf.getInputStream(e).use { ins ->
+                    FileOutputStream(out).use { os ->
+                        while (true) {
+                            val r = ins.read(buf)
+                            if (r < 0) break
+                            os.write(buf, 0, r)
+                            done += r
+                            val now = System.nanoTime()
+                            if (now - last > 150_000_000L) { last = now; try { cb.onProgress(e.name, done, total, 0.0) } catch (_: Throwable) {} }
+                        }
+                    }
+                }
+                n++
+            }
+            finish(cb, true, "Diekstrak $n file ke ${target.name}", done, total)
+        }
+    }
 
     private class XJob(val j: JSONObject) {
         val out: String = j.getString("out")

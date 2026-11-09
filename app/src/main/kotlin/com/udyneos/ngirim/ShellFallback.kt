@@ -1,4 +1,4 @@
-package com.ngirim.app
+package com.udyneos.ngirim
 
 import android.content.Context
 import android.os.RemoteException
@@ -38,6 +38,7 @@ class ShellFallback private constructor(
     private val cbIds = IdentityHashMap<IProgressCallback, Int>()
     private val cbById = ConcurrentHashMap<Int, IProgressCallback>()
     private val nextCb = AtomicInteger(1)
+    private val cbExec = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "ngirim-fallback-cb").apply { isDaemon = true } }
 
     init {
         Thread({ readLoop() }, "ngirim-fallback-rx").apply { isDaemon = true }.start()
@@ -63,14 +64,26 @@ class ShellFallback private constructor(
                         else f?.completeExceptionally(RuntimeException(Rpc.rStr(inp)))
                     }
                     1 -> {
+                        // Callback dijalankan di thread terpisah agar callback yang memanggil svc
+                        // (mis. memuat ulang daftar) tidak memblokir pembaca balasan.
                         val cb = cbById[inp.readInt()]
-                        when (inp.readUnsignedByte()) {
-                            0 -> { val c = Rpc.rStr(inp); val d = inp.readLong(); val t = inp.readLong(); val b = inp.readDouble()
-                                try { cb?.onProgress(c, d, t, b) } catch (_: Throwable) {} }
-                            1 -> { val m = Rpc.rStr(inp); try { cb?.onLog(m) } catch (_: Throwable) {} }
-                            else -> { val ok = inp.readBoolean(); val m = Rpc.rStr(inp); val d = inp.readLong(); val t = inp.readLong()
-                                try { cb?.onFinish(ok, m, d, t) } catch (_: Throwable) {} }
+                        val kind = inp.readUnsignedByte()
+                        var ev: () -> Unit = {}
+                        when (kind) {
+                            0 -> {
+                                val c = Rpc.rStr(inp); val d = inp.readLong(); val t = inp.readLong(); val bps = inp.readDouble()
+                                ev = { cb?.onProgress(c, d, t, bps) }
+                            }
+                            1 -> {
+                                val m = Rpc.rStr(inp)
+                                ev = { cb?.onLog(m) }
+                            }
+                            else -> {
+                                val ok = inp.readBoolean(); val m = Rpc.rStr(inp); val d = inp.readLong(); val t = inp.readLong()
+                                ev = { cb?.onFinish(ok, m, d, t) }
+                            }
                         }
+                        cbExec.execute { try { ev() } catch (_: Throwable) {} }
                     }
                     else -> throw java.io.IOException("frame tidak dikenal")
                 }
@@ -85,6 +98,7 @@ class ShellFallback private constructor(
         alive = false
         for (f in pending.values) f.completeExceptionally(RemoteException("Proses Shizuku terputus"))
         pending.clear()
+        cbExec.shutdown()
         try { sock.close() } catch (_: Throwable) {}
         try { proc.destroy() } catch (_: Throwable) {}
     }
@@ -143,6 +157,8 @@ class ShellFallback private constructor(
     override fun rename(from: String, to: String): Boolean = call(16, from, to) as Boolean
     override fun pathSize(path: String): Long = call(17, path) as Long
     override fun backupXapk(jobs: Array<String>, cb: IProgressCallback) { call(18, jobs, cb) }
+    override fun installApk(paths: Array<String>, cb: IProgressCallback) { call(19, paths, cb) }
+    override fun unzip(zip: String, destDir: String, cb: IProgressCallback) { call(20, zip, destDir, cb) }
 
     override fun destroy() {
         try { call(0) } catch (_: Throwable) {}
@@ -161,7 +177,7 @@ class ShellFallback private constructor(
             val cmd = arrayOf(
                 "sh", "-c",
                 "export CLASSPATH='$apk'; exec /system/bin/app_process /system/bin " +
-                    "--nice-name=ngirim_shell com.ngirim.app.ShellHost 2>&1"
+                    "--nice-name=ngirim_shell com.udyneos.ngirim.ShellHost 2>&1"
             )
             val proc: Process = try {
                 // newProcess bersifat private sejak Shizuku API 13, jadi dipanggil lewat refleksi.

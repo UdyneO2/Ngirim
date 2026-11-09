@@ -1,15 +1,18 @@
-package com.ngirim.app
+package com.udyneos.ngirim
 
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
 import android.content.ComponentName
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.net.NetworkCapabilities
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
@@ -27,6 +30,9 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.EditText
+import android.widget.ProgressBar
+import android.widget.TextView
+import android.widget.Toast
 import android.util.Base64
 import android.widget.FrameLayout
 import org.json.JSONArray
@@ -81,6 +87,8 @@ class MainActivity : Activity() {
     @Volatile private var dark = false
     @Volatile private var showHidden = false
     @Volatile private var useTrash = true
+    @Volatile private var instShizuku = false
+    @Volatile private var autoUpdate = true
     @Volatile private var xapkDir = "$base/XAPK"
 
     // file manager (tab Lokal)
@@ -137,22 +145,31 @@ class MainActivity : Activity() {
             .debuggable(BuildConfig.DEBUG)
             .version(BuildConfig.VERSION_CODE)
 
-    // Watchdog koneksi Shizuku (cadangan bila event binder/izin tidak datang)
+    // Koneksi Shizuku: SATU kali bind. Bila gagal tidak ada coba ulang otomatis; UI menampilkan
+    // tombol "Shizuku Legacy" (jalur Shizuku.Process) dan "Hubungkan Shizuku" (bind manual).
     private val shizukuWatch = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var curArgs: Shizuku.UserServiceArgs? = null
     @Volatile private var bindingSince = 0L
-    @Volatile private var bindAttempts = 0
+    @Volatile private var bindFailed = false
     @Volatile private var permAskedAt = 0L
-    // Jalur cadangan (Shizuku.Process) dipakai otomatis bila bind UserService gagal 3x
-    @Volatile private var useFallback = false
+    @Volatile private var legacy = false
     @Volatile private var fbBusy = false
-    private val maxBindTries = 3
+    private val bindTimeoutMs = 8_000L
+
+    private fun shizukuFail(msg: String) {
+        bindFailed = true; bindingSince = 0L
+        Native.setShizuku(false, msg)
+        Native.setShizukuFailed(true)
+    }
+
+    private fun resetNet() { myPort = -1; curAddr = ""; curPin = ""; pushNetInfo() }
 
     private val conn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             if (binder == null || !binder.pingBinder()) return
             svc = IFileService.Stub.asInterface(binder)
-            bindingSince = 0L; bindAttempts = 0
+            bindingSince = 0L; bindFailed = false
+            Native.setShizukuFailed(false)
             Native.setShizuku(true, "Shizuku terhubung")
             Native.log("OK     service Shizuku aktif")
             try { svc?.setAllowBrowse(allowBrowse) } catch (_: Throwable) {}
@@ -161,21 +178,24 @@ class MainActivity : Activity() {
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             svc = null
-            bindingSince = 0L
-            Native.setShizuku(false, "Service terputus - menyambung ulang...")
-            myPort = -1; curAddr = ""; curPin = ""
-            pushNetInfo()
+            shizukuFail("Service terputus - ketuk Shizuku Legacy atau Hubungkan Shizuku")
+            resetNet()
         }
     }
 
-    private val onBinder = Shizuku.OnBinderReceivedListener { shizukuWatch.execute { shizukuTick() } }
+    private val onBinder = Shizuku.OnBinderReceivedListener {
+        bindFailed = false; legacy = false
+        shizukuWatch.execute { shizukuTick() }
+    }
     private val onDead = Shizuku.OnBinderDeadListener {
+        (svc as? ShellFallback)?.die()
         svc = null
-        bindingSince = 0L
+        bindingSince = 0L; bindFailed = false; legacy = false
+        Native.setShizukuFailed(false)
         Native.setShizuku(false, "Shizuku berhenti - start lagi lewat app Shizuku")
     }
     private val onPerm = Shizuku.OnRequestPermissionResultListener { _, result ->
-        if (result == PackageManager.PERMISSION_GRANTED) bindingSince = 0L
+        if (result == PackageManager.PERMISSION_GRANTED) { bindingSince = 0L; bindFailed = false }
         shizukuWatch.execute { shizukuTick() }
     }
 
@@ -297,6 +317,7 @@ class MainActivity : Activity() {
         window.insetsController?.setSystemBarsAppearance(
             0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
         worker.execute { loadApps() }
+        if (autoUpdate) shizukuWatch.schedule({ checkUpdate(false) }, 4, TimeUnit.SECONDS)
 
         shizukuWatch.scheduleWithFixedDelay({ shizukuTick() }, 0, 2, TimeUnit.SECONDS)
         Shizuku.addBinderReceivedListenerSticky(onBinder)
@@ -335,9 +356,8 @@ class MainActivity : Activity() {
 
     // ================================================================ Shizuku
     /**
-     * Dipanggil tiap 2 detik dan saat ada event. Urutan: Shizuku hidup -> izin -> bind service.
-     * Bila bind tidak tersambung dalam 6 detik, bind ulang (nama proses bergantian fs/fs2 agar
-     * proses macet sebelumnya tidak ikut terpakai).
+     * Dipanggil tiap 2 detik dan saat ada event. Urutan: Shizuku hidup -> izin -> satu kali bind.
+     * Bind yang tidak tersambung dalam [bindTimeoutMs] ditandai gagal dan TIDAK diulang otomatis.
      */
     private fun shizukuTick() {
         try {
@@ -345,11 +365,13 @@ class MainActivity : Activity() {
             if (s != null) {
                 if (s.asBinder().pingBinder()) return
                 svc = null
-                bindingSince = 0L
-                if (useFallback) { myPort = -1; curAddr = ""; curPin = ""; pushNetInfo() }
+                resetNet()
+                shizukuFail("Service terputus - ketuk Shizuku Legacy atau Hubungkan Shizuku")
+                return
             }
             if (!Shizuku.pingBinder()) {
                 bindingSince = 0L
+                Native.setShizukuFailed(false)
                 Native.setShizuku(false, "Shizuku belum berjalan - buka app Shizuku lalu Start")
                 return
             }
@@ -363,46 +385,42 @@ class MainActivity : Activity() {
                 Native.setShizuku(false, "Menunggu izin Shizuku - ketuk Izinkan pada dialog")
                 return
             }
-            if (useFallback) { startFallback(); return }
-            val now = SystemClock.elapsedRealtime()
-            if (bindingSince == 0L || now - bindingSince > 6_000) {
-                if (bindAttempts >= maxBindTries) { switchToFallback(); return }
-                startBind()
+            if (legacy || fbBusy || bindFailed) return
+            if (bindingSince == 0L) { startBind(); return }
+            if (SystemClock.elapsedRealtime() - bindingSince > bindTimeoutMs) {
+                curArgs?.let { try { Shizuku.unbindUserService(it, conn, true) } catch (_: Throwable) {} }
+                curArgs = null
+                Native.log("Shizuku: bind UserService tidak merespons")
+                shizukuFail("Bind service Shizuku gagal. Coba Shizuku Legacy, atau Hubungkan Shizuku untuk bind manual.")
             }
-            else Native.setShizuku(false, if (bindAttempts >= 4)
-                "Service Shizuku belum merespons (percobaan $bindAttempts). Stop lalu Start Shizuku, kemudian ketuk Hubungkan Shizuku."
-            else "Menghubungkan service Shizuku (percobaan $bindAttempts)...")
         } catch (t: Throwable) {
-            Native.setShizuku(false, "Shizuku error: ${t.message}")
+            shizukuFail("Shizuku error: ${t.message}")
         }
     }
 
-    /** Bind gagal [maxBindTries]x: lepas UserService, pindah ke jalur Shizuku.Process. */
-    private fun switchToFallback() {
+    /** Jalur Legacy: tanpa UserService, FileService dijalankan lewat Shizuku.Process. */
+    private fun startLegacy() {
+        if (fbBusy) return
         curArgs?.let { try { Shizuku.unbindUserService(it, conn, true) } catch (_: Throwable) {} }
         curArgs = null
-        useFallback = true
-        Native.log("Shizuku: bind gagal $bindAttempts kali - pindah ke jalur Shizuku.Process")
-        startFallback()
-    }
-
-    private fun startFallback() {
-        if (fbBusy || svc != null) return
-        fbBusy = true
-        Native.setShizuku(false, "Menyambung lewat Shizuku.Process (cadangan)...")
+        (svc as? ShellFallback)?.die()
+        svc = null
+        legacy = true; fbBusy = true; bindFailed = false
+        Native.setShizukuFailed(false)
+        Native.setShizuku(false, "Menyambung lewat Shizuku Legacy (Shizuku.Process)...")
         Thread {
             try {
                 val s = ShellFallback.connect(this) { Native.log(it) }
                 svc = s
-                bindAttempts = 0
-                Native.setShizuku(true, "Shizuku terhubung (jalur cadangan Process)")
-                Native.log("OK     service aktif lewat Shizuku.Process")
+                Native.setShizuku(true, "Shizuku terhubung (mode Legacy)")
+                Native.log("OK     service aktif lewat Shizuku Legacy")
                 try { s.setAllowBrowse(allowBrowse) } catch (_: Throwable) {}
                 fmLoad()
                 paneLoad(0); paneLoad(1)
             } catch (t: Throwable) {
-                Native.setShizuku(false, "Jalur cadangan gagal: ${t.message}. Ketuk Hubungkan Shizuku untuk mencoba lagi.")
-                Native.log("ERR    jalur Shizuku.Process: ${t.message}")
+                legacy = false
+                Native.log("ERR    Shizuku Legacy: ${t.message}")
+                shizukuFail("Shizuku Legacy gagal: ${t.message}")
             } finally {
                 fbBusy = false
             }
@@ -411,14 +429,13 @@ class MainActivity : Activity() {
 
     private fun startBind() {
         curArgs?.let { try { Shizuku.unbindUserService(it, conn, true) } catch (_: Throwable) {} }
-        bindAttempts++
-        val args = makeArgs(if (bindAttempts % 2 == 1) "fs" else "fs2")
+        val args = makeArgs("fs")
         curArgs = args
         bindingSince = SystemClock.elapsedRealtime()
-        Native.setShizuku(false, "Menghubungkan service Shizuku (percobaan $bindAttempts)...")
-        if (bindAttempts > 1) Native.log("Shizuku: bind ulang (percobaan $bindAttempts)")
+        Native.setShizukuFailed(false)
+        Native.setShizuku(false, "Menghubungkan service Shizuku...")
         try { Shizuku.bindUserService(args, conn) }
-        catch (t: Throwable) { Native.setShizuku(false, "Gagal bind: ${t.message}") }
+        catch (t: Throwable) { shizukuFail("Gagal bind: ${t.message}") }
     }
 
     // ================================================================ aksi dari UI ImGui
@@ -426,14 +443,11 @@ class MainActivity : Activity() {
         val p = a.split("|", limit = 4)
         when (p[0]) {
             "CONNECT" -> {
-                bindingSince = 0L; bindAttempts = 0; permAskedAt = 0L
-                if (useFallback) {
-                    useFallback = false
-                    (svc as? ShellFallback)?.die()
-                    svc = null
-                }
+                (svc as? ShellFallback)?.let { it.die(); svc = null }
+                legacy = false; bindFailed = false; bindingSince = 0L; permAskedAt = 0L
                 shizukuWatch.execute { shizukuTick() }
             }
+            "LEGACY" -> shizukuWatch.execute { startLegacy() }
             "OPEN_SHIZUKU" -> runOnUiThread {
                 val i = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
                 if (i != null) startActivity(i) else Native.log("ERR app Shizuku tidak ditemukan - pasang dari shizuku.rikka.app")
@@ -453,6 +467,7 @@ class MainActivity : Activity() {
             }
             // pengaturan
             "SET" -> setPref(p[1], p[2] == "1")
+            "UPD_CHECK" -> checkUpdate(true)
             "SET_NAME" -> askText("Nama perangkat", "nama", false, myName) { v ->
                 if (v.isNotEmpty()) { myName = v.take(40); prefs.edit().putString("devName", myName).apply(); pushSettings() }
             }
@@ -905,13 +920,15 @@ class MainActivity : Activity() {
         dark = prefs.getBoolean("dark", false)
         showHidden = prefs.getBoolean("hidden", false)
         useTrash = prefs.getBoolean("trash", true)
+        instShizuku = prefs.getBoolean("inst", false)
+        autoUpdate = prefs.getBoolean("autoupd", true)
         xapkDir = prefs.getString("xapkDir", xapkDir) ?: xapkDir
         myName = prefs.getString("devName", myName) ?: myName
         pushSettings()
         fmPublish()
     }
 
-    private fun pushSettings() = Native.setSettings(dark, showHidden, useTrash, xapkDir, myName)
+    private fun pushSettings() = Native.setSettings(dark, showHidden, useTrash, xapkDir, myName, instShizuku, autoUpdate)
 
     private fun setPref(key: String, v: Boolean) {
         val e = prefs.edit()
@@ -919,6 +936,8 @@ class MainActivity : Activity() {
             "theme" -> { dark = v; e.putBoolean("dark", v) }
             "hidden" -> { showHidden = v; e.putBoolean("hidden", v) }
             "trash" -> { useTrash = v; e.putBoolean("trash", v) }
+            "inst" -> { instShizuku = v; e.putBoolean("inst", v) }
+            "autoupd" -> { autoUpdate = v; e.putBoolean("autoupd", v) }
         }
         e.apply()
         pushSettings()
@@ -1032,9 +1051,199 @@ class MainActivity : Activity() {
                 else Native.log("${sel.size} item masuk daftar kirim")
                 Native.selectTab(1)
             }
+            "VIEW" -> selected(arg).firstOrNull()?.takeIf { !it.isDir }?.let { e ->
+                stageFiles(listOf(joinPath(fmPath, e.name))) { openFile(it[0]) }
+            }
+            "SHARE" -> selected(arg).filter { !it.isDir }.let { l ->
+                if (l.isNotEmpty()) stageFiles(l.map { joinPath(fmPath, it.name) }) { shareFiles(it) }
+            }
+            "INSTALL" -> selected(arg).firstOrNull()?.takeIf { !it.isDir }?.let { installApkPath(joinPath(fmPath, it.name)) }
+            "UNZIP" -> selected(arg).firstOrNull()?.takeIf { !it.isDir }?.let { e ->
+                val s = svc ?: return fmFail("Shizuku belum siap")
+                val z = joinPath(fmPath, e.name); val dst = fmPath
+                Native.setFmProgress(true, 0, 0, 0.0, "Mengekstrak ${e.name}...")
+                worker.execute {
+                    try { s.unzip(z, dst, fmCb) } catch (t: Throwable) { fmFail("gagal mengekstrak: ${t.message}") }
+                }
+            }
             "FIND" -> askText("Cari di folder ini", "nama berisi...", false, fmFilter) { v -> fmFilter = v; fmPublish() }
             "FINDX" -> { fmFilter = ""; fmPublish() }
         }
+    }
+
+    // ================================================================ buka / bagikan / pasang
+    private fun shareUri(f: File): Uri {
+        val rel = f.relativeTo(ShareProvider.root(this)).path.split("/")
+        val b = Uri.Builder().scheme("content").authority("$packageName.share")
+        for (seg in rel) b.appendPath(seg)
+        return b.build()
+    }
+
+    private val stageCb = object : IProgressCallback.Stub() {
+        @Volatile var then: ((Boolean) -> Unit)? = null
+        override fun onProgress(current: String, done: Long, total: Long, bytesPerSec: Double) {
+            Native.setFmProgress(true, done, total, bytesPerSec, current)
+        }
+        override fun onLog(msg: String) { Native.log(msg) }
+        override fun onFinish(ok: Boolean, message: String, done: Long, total: Long) {
+            Native.setFmProgress(false, done, total, 0.0, "")
+            if (!ok) Native.log("ERR    menyiapkan file: $message")
+            val t = then; then = null
+            if (ok) t?.invoke(true)
+        }
+    }
+
+    /** Menyalin file ke cache aplikasi (lewat Shizuku bila perlu) agar bisa disajikan ke aplikasi lain. */
+    private fun stageFiles(paths: List<String>, then: (List<File>) -> Unit) {
+        worker.execute {
+            val root = ShareProvider.root(this)
+            try { root.listFiles()?.forEach { it.deleteRecursively() } } catch (_: Throwable) {}
+            val dir = File(root, System.currentTimeMillis().toString())
+            dir.mkdirs()
+            val dsts = paths.map { File(dir, File(it).name) }
+            val s = svc
+            if (s == null) {
+                try {
+                    paths.forEachIndexed { i, p -> File(p).copyTo(dsts[i], overwrite = true) }
+                    runOnUiThread { then(dsts) }
+                } catch (t: Throwable) { fmFail("Shizuku belum siap dan file tidak terbaca langsung: ${t.message}") }
+                return@execute
+            }
+            Native.setFmProgress(true, 0, 0, 0.0, "Menyiapkan file...")
+            stageCb.then = { runOnUiThread { then(dsts) } }
+            try { s.start(paths.toTypedArray(), dsts.map { it.path }.toTypedArray(), false, stageCb) }
+            catch (t: Throwable) { stageCb.then = null; fmFail("gagal menyiapkan file: ${t.message}") }
+        }
+    }
+
+    private fun openFile(f: File) {
+        val uri = shareUri(f)
+        val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, ShareProvider.mimeOf(f.name))
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        i.clipData = ClipData.newRawUri(f.name, uri)
+        try { startActivity(i) }
+        catch (_: ActivityNotFoundException) { Native.log("ERR    tidak ada aplikasi untuk membuka ${f.name}") }
+    }
+
+    private fun shareFiles(fs: List<File>) {
+        val uris = ArrayList(fs.map { shareUri(it) })
+        val i = if (uris.size == 1) Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris[0])
+        else Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        i.type = if (fs.size == 1) ShareProvider.mimeOf(fs[0].name) else "*/*"
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        i.clipData = ClipData.newRawUri(fs[0].name, uris[0]).also { cd -> for (u in uris.drop(1)) cd.addItem(ClipData.Item(u)) }
+        try { startActivity(Intent.createChooser(i, "Bagikan lewat").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        catch (_: ActivityNotFoundException) { Native.log("ERR    tidak ada aplikasi untuk berbagi") }
+    }
+
+    private val installCb = object : IProgressCallback.Stub() {
+        override fun onProgress(current: String, done: Long, total: Long, bytesPerSec: Double) {}
+        override fun onLog(msg: String) { Native.log(msg) }
+        override fun onFinish(ok: Boolean, message: String, done: Long, total: Long) {
+            Native.log((if (ok) "OK     " else "ERR    ") + message)
+            runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    /** Pasang APK sesuai pengaturan: Shizuku (senyap) atau installer sistem. */
+    private fun installApkPath(path: String, forceShizuku: Boolean = false) {
+        val s = svc
+        if ((instShizuku || forceShizuku) && s != null) {
+            Native.log("Memasang ${File(path).name} lewat Shizuku...")
+            worker.execute {
+                try { s.installApk(arrayOf(path), installCb) } catch (t: Throwable) { Native.log("ERR    pasang: ${t.message}") }
+            }
+            return
+        }
+        if ((instShizuku || forceShizuku) && s == null) Native.log("Shizuku belum siap - memakai installer sistem")
+        val inShare = File(path).canonicalPath.startsWith(ShareProvider.root(this).canonicalPath + "/")
+        if (inShare) systemInstall(File(path)) else stageFiles(listOf(path)) { systemInstall(it[0]) }
+    }
+
+    private fun systemInstall(f: File) {
+        if (!packageManager.canRequestPackageInstalls()) {
+            Native.log("Izinkan 'pasang aplikasi tak dikenal' untuk Ngirim, lalu pasang lagi")
+            try { startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))) } catch (_: Throwable) {}
+            return
+        }
+        val uri = shareUri(f)
+        val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        i.clipData = ClipData.newRawUri(f.name, uri)
+        try { startActivity(i) } catch (_: ActivityNotFoundException) { Native.log("ERR    installer sistem tidak ditemukan") }
+    }
+
+    // ================================================================ pembaruan dari GitHub
+    private val updating = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun checkUpdate(manual: Boolean) {
+        if (!updating.compareAndSet(false, true)) return
+        if (manual) Native.setUpdateMsg("Memeriksa pembaruan...")
+        Thread {
+            try {
+                val r = Updater.latest()
+                when {
+                    r == null -> if (manual) Native.setUpdateMsg("Belum ada rilis di GitHub.")
+                    !Updater.isNewer(r.tag, BuildConfig.VERSION_NAME) -> {
+                        Native.setUpdateMsg("Sudah versi terbaru (${BuildConfig.VERSION_NAME}); rilis terakhir ${r.tag}.")
+                    }
+                    else -> {
+                        Native.setUpdateMsg("Pembaruan ${r.tag} tersedia.")
+                        runOnUiThread { showUpdateDialog(r) }
+                    }
+                }
+            } catch (t: Throwable) {
+                if (manual) Native.setUpdateMsg("Gagal memeriksa pembaruan: ${t.message}")
+                Native.log("ERR    cek pembaruan: ${t.message}")
+            } finally { updating.set(false) }
+        }.start()
+    }
+
+    private fun showUpdateDialog(r: Updater.Release) {
+        val mb = if (r.size > 0) String.format(" (%.1f MB)", r.size / 1048576.0) else ""
+        val notes = Updater.plainNotes(r.body).ifEmpty { "(Tidak ada catatan rilis)" }
+        val via = if (svc != null) "dipasang lewat Shizuku" else "dipasang lewat installer sistem"
+        AlertDialog.Builder(this)
+            .setTitle("Pembaruan ${r.tag}")
+            .setMessage("Terpasang: ${BuildConfig.VERSION_NAME}\nUkuran unduhan${mb}, $via.\n\nYang baru:\n$notes")
+            .setPositiveButton("Perbarui") { _, _ -> downloadAndInstall(r) }
+            .setNegativeButton("Nanti", null)
+            .show()
+    }
+
+    private fun downloadAndInstall(r: Updater.Release) {
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        val label = TextView(this).apply { text = "Mengunduh ${r.apkName}..."; setPadding(0, 0, 0, 24) }
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 32, 48, 8); addView(label); addView(bar)
+        }
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val dlg = AlertDialog.Builder(this).setTitle("Memperbarui ke ${r.tag}").setView(box)
+            .setCancelable(false).setNegativeButton("Batal") { _, _ -> stop.set(true) }.show()
+        Thread {
+            try {
+                val root = ShareProvider.root(this)
+                try { root.listFiles()?.forEach { it.deleteRecursively() } } catch (_: Throwable) {}
+                val dest = File(root, "update/${r.apkName}")
+                var lastUi = 0L
+                Updater.download(r, dest, { d, t ->
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastUi > 150) {
+                        lastUi = now
+                        runOnUiThread {
+                            if (t > 0) bar.progress = (d * 100 / t).toInt()
+                            label.text = String.format("%.1f / %.1f MB", d / 1048576.0, t / 1048576.0)
+                        }
+                    }
+                }, { stop.get() })
+                runOnUiThread { dlg.dismiss(); Native.log("OK     unduhan selesai: ${r.apkName}"); installApkPath(dest.path, forceShizuku = true) }
+            } catch (t: Throwable) {
+                runOnUiThread { dlg.dismiss() }
+                Native.setUpdateMsg("Pembaruan gagal: ${t.message}")
+                Native.log("ERR    pembaruan: ${t.message}")
+            }
+        }.start()
     }
 
     private fun fmFail(msg: String) {
