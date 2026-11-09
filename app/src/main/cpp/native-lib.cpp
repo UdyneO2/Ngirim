@@ -160,35 +160,50 @@ void applyTheme(bool dark) {
     c[ImGuiCol_TextSelectedBg] = sel;
 }
 
-const char* kChangelog[] = {
-    "v2.1",
-    "- Cek pembaruan dari GitHub Release: dialog catatan rilis, unduh, lalu pasang langsung",
-    "- File manager: Buka, Bagikan, Pasang APK, Ekstrak ZIP; mode pasang di Pengaturan",
-    "- Tombol Shizuku Legacy (Shizuku.Process) bila bind gagal; coba ulang otomatis dihapus",
-    "- Nama paket com.udyneos.ngirim; FTP: kotak centang kecil, nama panjang terbaca",
-    "",
-    "v2.0",
-    "- UI baru bergaya Windows 10: tema Terang/Gelap, kontrol datar, ikon file/folder",
-    "- Tab Lokal sekarang file manager: salin, potong, tempel, hapus (tempat sampah), ganti nama,",
-    "  folder baru, properti, urutkan, cari, dan akses cepat ke folder (bisa disematkan)",
-    "- Backup APK: tombol di tab Lokal membuka pemilih aplikasi, hasil langsung .xapk",
-    "  (manifest + split APK, OBB dan DATA game opsional)",
-    "- Tab Pengaturan menggantikan Changelog (riwayat perubahan ada di bagian bawah)",
-    "- Terminal menjadi tab Log, diletakkan setelah Pengaturan (urutan: Lokal, Wi-Fi, FTP, Pengaturan, Log)",
-    "- Rute lama (Foto, OBB, DATA, Kustom) digantikan file manager + akses cepat",
-    "",
-    "v1.0",
-    "- Perbaikan tab tidak bisa di-tap, koneksi Shizuku otomatis, tab FTP dua panel,",
-    "  saklar Terima, perangkat aktif otomatis, jelajah folder perangkat lain",
-    "",
-    "v1.1 - v1.2 Beta",
-    "- Transfer Wi-Fi dengan PIN, file browser, log, live progress",
-    "",
-    "Catatan",
-    "- Data Wi-Fi tidak dienkripsi (otentikasi PIN saja)",
-    "- Nama non-Latin bisa tampil sebagai '?'",
-    "- Router dengan client isolation memblokir koneksi antar-perangkat",
-    "- XAPK dengan isi total di atas 4 GB tidak didukung (batas ZIP)",
+struct Rilis {
+    const char* ver;
+    const char* judul;
+    const char* info;
+    std::vector<const char*> butir;
+};
+
+// Urut dari versi terlama ke terbaru.
+const std::vector<Rilis> kRilis = {
+    {"v1.0", "Rilis stabil pertama", "8 Nov 2026 - gabungan v1.1 dan v1.2 beta",
+     {"Koneksi Shizuku diperbaiki: tersambung sendiri setelah izin diberikan, tak lagi menggantung di 'Menunggu Shizuku'",
+      "Ada tombol langsung ke app Shizuku dan pesan status yang lebih jelas",
+      "Semua fitur beta di bawah ikut di rilis ini"}},
+    {"v1.1 beta", "Kirim lewat Wi-Fi", "8 Nov 2026",
+     {"Transfer antar-HP di Wi-Fi yang sama, dipasangkan dengan PIN 6 digit",
+      "Kirim file dan folder lengkap dengan isinya; penerima memilih folder simpan",
+      "Backup dan restore APK (termasuk split), foto, serta data game OBB dan DATA",
+      "Progress langsung: persen, kecepatan, sisa waktu; bisa dibatalkan kapan saja",
+      "Log gaya terminal dan akses file lewat Shizuku, tanpa root"}},
+    {"v1.2 beta", "FTP dan saklar Terima", "8 Nov 2026",
+     {"Tab FTP: dua folder berdampingan dengan pintasan folder dan favorit sendiri",
+      "Panel kanan bisa menjelajah HP lain yang sudah dipasangkan, lalu salin ke dua arah",
+      "Saklar Terima ON/OFF; perangkat aktif muncul otomatis di daftar",
+      "Perbaikan: tab Wi-Fi, FTP, dan lainnya tidak bisa diketuk"}},
+    {"v2.0", "Tampilan baru dan file manager", "9 Nov 2026",
+     {"Antarmuka ala Windows 10 dengan tema Terang dan Gelap",
+      "Tab Lokal jadi file manager: salin, potong, tempel, hapus ke sampah, ubah nama, properti, cari",
+      "Akses cepat ke folder penting, bisa menyematkan folder sendiri",
+      "Backup APK langsung ke .xapk, OBB dan DATA game opsional",
+      "Tab Pengaturan menggantikan Changelog; Terminal berganti nama jadi Log"}},
+    {"v2.1", "Update langsung dan Legacy", "9 Nov 2026",
+     {"Cek pembaruan dari GitHub Release, tampil catatan rilis lalu pasang langsung",
+      "File manager: Buka, Bagikan, Pasang APK, dan Ekstrak ZIP",
+      "Pilihan pemasangan: installer sistem atau Shizuku (senyap)",
+      "Tombol Shizuku Legacy bila bind gagal; coba ulang otomatis dihapus",
+      "Nama paket jadi com.udyneos.ngirim (terpasang sebagai aplikasi baru)",
+      "FTP: kotak centang lebih kecil, nama panjang kini terbaca"}},
+};
+
+const std::vector<const char*> kBatasan = {
+    "Data Wi-Fi tidak dienkripsi, hanya dijaga PIN",
+    "Nama non-Latin bisa tampil sebagai '?'",
+    "Router dengan client isolation memblokir koneksi antar-perangkat",
+    "XAPK dengan isi di atas 4 GB belum didukung (batas ZIP)",
 };
 
 std::string fmtSize(double b) {
@@ -1005,14 +1020,50 @@ void drawSettings() {
     }
 
     ImGui::SeparatorText("Tentang");
-    ImGui::Text("Ngirim %s", kVersion);
-    dimWrapped("Transfer file, backup APK/XAPK, dan file manager lewat Shizuku.");
+    ImGui::SetWindowFontScale(1.3f);
+    ImGui::TextColored(g_pal.accent, "Ngirim: Berbagi aplikasi dengan mudah");
+    ImGui::SetWindowFontScale(1.f);
+    ImGui::TextWrapped("Sender, FTP & File manager");
+    dimWrapped("Kirim lewat Wi-Fi, kelola dua folder sekaligus, dan backup aplikasi ke XAPK, semuanya dalam satu app.");
+    ImGui::Spacing();
+    ImGui::Text("Versi %s", kVersion);
+    dimWrapped("Dibuat oleh UdyneO2. Dibangun dengan Dear ImGui, Shizuku API, dan Kotlin.");
+    dimWrapped("github.com/UdyneO2/Ngirim");
 
     ImGui::SeparatorText("Riwayat perubahan");
-    for (const char* l : kChangelog) {
-        if (!*l) ImGui::Spacing();
-        else if (l[0] == 'v') ImGui::TextColored(g_pal.accent, "%s", l);
-        else ImGui::TextWrapped("%s", l);
+    {
+        static int cmd = 0;   // 1 = buka semua, 2 = tutup semua
+        bool first = true;
+        if (wrapButton("Buka semua##rl", first)) cmd = 1;
+        if (wrapButton("Tutup semua##rl", first)) cmd = 2;
+        ImGui::Spacing();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f * d, 10.f * d));
+        const size_t n = kRilis.size();
+        for (size_t i = 0; i < n; i++) {
+            const Rilis& r = kRilis[i];
+            char head[200];
+            snprintf(head, sizeof head, "%s  -  %s###rl%zu", r.ver, r.judul, i);
+            if (cmd) ImGui::SetNextItemOpen(cmd == 1, ImGuiCond_Always);
+            else if (i == n - 1) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            const bool open = ImGui::CollapsingHeader(head);
+            if (open) {
+                ImGui::PopStyleVar();
+                ImGui::Indent(8.f * d);
+                ImGui::TextColored(g_pal.accent, "%s", r.info);
+                for (const char* it : r.butir) ImGui::TextWrapped("+ %s", it);
+                ImGui::Unindent(8.f * d);
+                ImGui::Spacing();
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f * d, 10.f * d));
+            }
+        }
+        if (cmd) ImGui::SetNextItemOpen(cmd == 1, ImGuiCond_Always);
+        if (ImGui::CollapsingHeader("Batasan yang diketahui###rlbat")) {
+            ImGui::PopStyleVar();
+            for (const char* it : kBatasan) ImGui::TextWrapped("- %s", it);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f * d, 10.f * d));
+        }
+        ImGui::PopStyleVar();
+        cmd = 0;
     }
     ImGui::Dummy(ImVec2(0, 24.f * d));
 }
