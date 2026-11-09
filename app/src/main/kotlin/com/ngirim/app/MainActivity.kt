@@ -554,7 +554,7 @@ class MainActivity : Activity() {
     // ================================================================ jaringan
     private fun localIp(): String? {
         try {
-            val cm = getSystemService(ConnectivityManager::class.java)
+            val cm = getSystemService(ConnectivityManager::class.java) ?: return null
             val net = cm.activeNetwork
             val caps = net?.let { cm.getNetworkCapabilities(it) }
             if (caps != null && (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
