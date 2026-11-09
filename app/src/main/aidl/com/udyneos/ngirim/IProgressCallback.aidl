@@ -1,4 +1,4 @@
-package com.ngirim.app;
+package com.udyneos.ngirim;
 
 oneway interface IProgressCallback {
     void onProgress(String current, long done, long total, double bytesPerSec);

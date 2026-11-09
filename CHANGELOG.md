@@ -1,10 +1,22 @@
 # Changelog Ngirim
 
-## v2.0 - 2026-11-09
+## v2.1 - 2026-11-09
 
-### Perbaikan
-- Bind UserService Shizuku gagal 3x: otomatis pindah ke jalur cadangan via Shizuku.Process (tombol Hubungkan Shizuku mencoba bind lagi)
+### Baru
+- **Cek pembaruan dari GitHub Release**: dialog konfirmasi menampilkan catatan rilis, lalu APK diunduh dan
+  dipasang langsung (lewat Shizuku bila terhubung, kalau tidak lewat installer sistem). Bisa otomatis saat
+  aplikasi dibuka atau manual dari Pengaturan
+- **File manager**: Buka file dengan aplikasi lain, Bagikan file, Pasang APK, dan Ekstrak ZIP
+- **Pengaturan > Pasang APK**: pilih installer sistem atau Shizuku (senyap)
+- **Shizuku Legacy**: bila bind service gagal muncul tombol Shizuku Legacy (tanpa UserService, FileService
+  dijalankan lewat Shizuku.Process) di samping tombol Hubungkan Shizuku
+
+### Perubahan
+- Bind Shizuku hanya dicoba sekali; coba ulang otomatis dihapus
+- Nama paket menjadi `com.udyneos.ngirim` (terpasang sebagai aplikasi baru, bukan pembaruan dari com.ngirim.app)
 - FTP: kotak centang dan ikon diperkecil, nama panjang dibungkus hingga 3 baris
+
+## v2.0 - 2026-11-09
 
 ### Baru
 - **UI bergaya Windows 10**: kontrol datar, aksen biru #0078D7, ikon file/folder, tema Terang (default) dan Gelap

@@ -1,4 +1,4 @@
-package com.ngirim.app
+package com.udyneos.ngirim
 
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -74,7 +74,7 @@ internal object Rpc {
 
 /**
  * Titik masuk proses cadangan. Dijalankan di uid shell lewat Shizuku.Process:
- *   CLASSPATH=<apk> app_process /system/bin com.ngirim.app.ShellHost
+ *   CLASSPATH=<apk> app_process /system/bin com.udyneos.ngirim.ShellHost
  * Token dibaca dari stdin, port localhost dicetak ke stdout. Proses berhenti sendiri
  * begitu stdin ditutup (aplikasi mati atau memanggil destroy).
  * Method FileService yang sama dipakai persis seperti pada jalur UserService.
@@ -168,6 +168,8 @@ object ShellHost {
             16 -> f.rename(s(0), s(1))
             17 -> f.pathSize(s(0))
             18 -> f.backupXapk(sa(0), cb(1))
+            19 -> f.installApk(sa(0), cb(1))
+            20 -> f.unzip(s(0), s(1), cb(2))
             else -> throw IllegalArgumentException("kode tidak dikenal: $code")
         }
     }

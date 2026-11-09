@@ -1,4 +1,4 @@
-package com.ngirim.app
+package com.udyneos.ngirim
 
 /** Jembatan JNI ke UI ImGui (C++). State UI disimpan di native, aksi di-poll tiap frame. */
 object Native {
@@ -12,8 +12,10 @@ object Native {
 
     // umum / pengaturan
     @JvmStatic external fun setShizuku(ok: Boolean, msg: String)
+    @JvmStatic external fun setShizukuFailed(failed: Boolean)
+    @JvmStatic external fun setUpdateMsg(msg: String)
     @JvmStatic external fun selectTab(idx: Int)
-    @JvmStatic external fun setSettings(dark: Boolean, hidden: Boolean, trash: Boolean, xapkDir: String, devName: String)
+    @JvmStatic external fun setSettings(dark: Boolean, hidden: Boolean, trash: Boolean, xapkDir: String, devName: String, instShizuku: Boolean, autoUpdate: Boolean)
 
     // file manager (tab Lokal)
     @JvmStatic external fun setFm(

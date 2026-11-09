@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr const char* kVersion = "v2.0";
+constexpr const char* kVersion = "v2.1";
 
 struct Item { std::string name, sub; long long size = 0; bool sel = false; };
 struct Entry { std::string name; long long size = 0; long long mtime = 0; bool dir = false; bool sel = false; };
@@ -33,6 +33,7 @@ struct State {
     std::mutex mu;
     // ---- umum
     bool shizuku = false;
+    bool shizukuFailed = false;   // bind gagal: tampilkan tombol Shizuku Legacy
     std::string shizukuMsg = "Menunggu Shizuku...";
     std::deque<std::string> actions;
     std::vector<std::string> logs;
@@ -40,6 +41,8 @@ struct State {
     int tabReq = -1;  // paksa pindah tab (indeks), -1 = tidak
     // ---- pengaturan
     bool dark = false, showHidden = false, useTrash = true;
+    bool instShizuku = false, autoUpdate = true;   // mode pasang APK, cek update saat dibuka
+    std::string updMsg;
     std::string xapkDir, devName;
     // ---- file manager (tab Lokal)
     std::string fmPath, fmErr, fmFilter;
@@ -158,6 +161,12 @@ void applyTheme(bool dark) {
 }
 
 const char* kChangelog[] = {
+    "v2.1",
+    "- Cek pembaruan dari GitHub Release: dialog catatan rilis, unduh, lalu pasang langsung",
+    "- File manager: Buka, Bagikan, Pasang APK, Ekstrak ZIP; mode pasang di Pengaturan",
+    "- Tombol Shizuku Legacy (Shizuku.Process) bila bind gagal; coba ulang otomatis dihapus",
+    "- Nama paket com.udyneos.ngirim; FTP: kotak centang kecil, nama panjang terbaca",
+    "",
     "v2.0",
     "- UI baru bergaya Windows 10: tema Terang/Gelap, kontrol datar, ikon file/folder",
     "- Tab Lokal sekarang file manager: salin, potong, tempel, hapus (tempat sampah), ganti nama,",
@@ -561,6 +570,23 @@ void drawFiles() {
     ImGui::BeginDisabled(busy);
     if (wrapButton("Folder baru##fm", first)) act("FM|NEW");
     ImGui::EndDisabled();
+    {
+        const Entry* one = nullptr; int nFile = 0;
+        for (auto& e : S.fm) if (e.sel) { one = &e; if (!e.dir) nFile++; }
+        const std::string ex = (nSel == 1 && one) ? lowerExt(one->name) : "";
+        ImGui::BeginDisabled(nSel != 1 || !one || one->dir || busy);
+        if (wrapButton("Buka##fm", first)) act("FM|VIEW|" + idxSel(S.fm));
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(nFile == 0 || nFile != nSel || busy);
+        if (wrapButton("Bagikan##fm", first)) act("FM|SHARE|" + idxSel(S.fm));
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(ex != "apk" || busy);
+        if (wrapButton("Pasang##fm", first, ex == "apk")) act("FM|INSTALL|" + idxSel(S.fm));
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(ex != "zip" || !S.shizuku || busy);
+        if (wrapButton("Ekstrak##fm", first)) act("FM|UNZIP|" + idxSel(S.fm));
+        ImGui::EndDisabled();
+    }
     ImGui::BeginDisabled(nSel == 0);
     if (wrapButton("Properti##fm", first)) act("FM|PROP|" + idxSel(S.fm));
     if (wrapButton("Kirim##fm", first)) act("FM|SEND|" + idxSel(S.fm));
@@ -943,6 +969,22 @@ void drawSettings() {
     ImGui::SameLine();
     if (ImGui::Button("Kosongkan sampah")) act("TRASH_EMPTY");
 
+    ImGui::SeparatorText("Pasang APK");
+    {
+        bool first = true;
+        if (wrapButton("Installer sistem##inst", first, !S.instShizuku)) { S.instShizuku = false; act("SET|inst|0"); }
+        if (wrapButton("Shizuku (senyap)##inst", first, S.instShizuku)) { S.instShizuku = true; act("SET|inst|1"); }
+        dimWrapped(S.instShizuku ? "Dipasang tanpa dialog lewat Shizuku (perlu Shizuku terhubung)."
+                                 : "Memakai installer Android; perlu izin 'pasang aplikasi tak dikenal'.");
+    }
+
+    ImGui::SeparatorText("Pembaruan");
+    ImGui::Text("Versi terpasang: %s", kVersion);
+    settingToggle("##autoupd", "Cek pembaruan saat dibuka", "Mengambil rilis terbaru dari GitHub", S.autoUpdate, "autoupd");
+    if (ImGui::Button("Cek pembaruan")) act("UPD_CHECK");
+    if (!S.updMsg.empty()) dimWrapped(S.updMsg.c_str());
+    dimWrapped("Pembaruan dipasang lewat Shizuku bila terhubung, kalau tidak lewat installer sistem.");
+
     ImGui::SeparatorText("Backup APK");
     ImGui::TextWrapped("Folder hasil: %s", S.xapkDir.c_str());
     if (ImGui::Button("Ubah folder hasil")) act("BPURPOSE|5");
@@ -954,9 +996,13 @@ void drawSettings() {
 
     ImGui::SeparatorText("Shizuku");
     ImGui::TextColored(S.shizuku ? g_pal.ok : g_pal.err, "%s", S.shizukuMsg.c_str());
-    if (ImGui::Button("Hubungkan ulang")) act("CONNECT");
-    ImGui::SameLine();
-    if (ImGui::Button("Buka app Shizuku")) act("OPEN_SHIZUKU");
+    {
+        bool first = true;
+        if (S.shizukuFailed && wrapButton("Shizuku Legacy", first, true)) act("LEGACY");
+        if (wrapButton("Hubungkan Shizuku", first)) act("CONNECT");
+        if (wrapButton("Buka app Shizuku", first)) act("OPEN_SHIZUKU");
+        if (S.shizukuFailed) dimWrapped("Legacy: tanpa UserService, perintah dijalankan lewat Shizuku.Process.");
+    }
 
     ImGui::SeparatorText("Tentang");
     ImGui::Text("Ngirim %s", kVersion);
@@ -1056,9 +1102,10 @@ void drawUI() {
         ImGui::PushStyleColor(ImGuiCol_Text, g_pal.err);
         ImGui::TextWrapped("%s", S.shizukuMsg.c_str());
         ImGui::PopStyleColor();
-        if (ImGui::Button("Hubungkan Shizuku")) act("CONNECT");
-        ImGui::SameLine();
-        if (ImGui::Button("Buka app Shizuku")) act("OPEN_SHIZUKU");
+        bool first = true;
+        if (S.shizukuFailed && wrapButton("Shizuku Legacy##top", first, true)) act("LEGACY");
+        if (wrapButton("Hubungkan Shizuku##top", first)) act("CONNECT");
+        if (wrapButton("Buka app Shizuku##top", first)) act("OPEN_SHIZUKU");
     }
 
     if (S.tabReq >= 0) S.apkOpen = false;
@@ -1143,7 +1190,7 @@ std::vector<Item> jitems(JNIEnv* e, jobjectArray names, jobjectArray subs, jlong
 
 extern "C" {
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_initGl(JNIEnv*, jclass, jfloat density) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_initGl(JNIEnv*, jclass, jfloat density) {
     g_density = density;
     if (!g_ctx) {
         IMGUI_CHECKVERSION();
@@ -1180,7 +1227,7 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_initGl(JNIEnv*, jclass, jfloat
     ImGui_ImplOpenGL3_Init("#version 300 es");
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_render(JNIEnv*, jclass, jint w, jint h) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_render(JNIEnv*, jclass, jint w, jint h) {
     if (!g_ctx) return;
     static auto last = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
@@ -1206,7 +1253,7 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_render(JNIEnv*, jclass, jint w
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_touch(JNIEnv*, jclass, jint action, jfloat x, jfloat y) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_touch(JNIEnv*, jclass, jint action, jfloat x, jfloat y) {
     if (!g_ctx) return;
     std::lock_guard<std::mutex> lk(g_touchMu);
     if (action == 0) {
@@ -1220,14 +1267,19 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_touch(JNIEnv*, jclass, jint ac
     }
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setShizuku(JNIEnv* e, jclass, jboolean ok, jstring msg) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setShizuku(JNIEnv* e, jclass, jboolean ok, jstring msg) {
     std::string m = js(e, msg);
     std::lock_guard<std::mutex> lk(S.mu);
     S.shizuku = ok;
     S.shizukuMsg = m;
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_log(JNIEnv* e, jclass, jstring msg) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setShizukuFailed(JNIEnv*, jclass, jboolean f) {
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.shizukuFailed = f;
+}
+
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_log(JNIEnv* e, jclass, jstring msg) {
     std::string m = js(e, msg);
     time_t t = time(nullptr);
     struct tm tmv;
@@ -1240,7 +1292,7 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_log(JNIEnv* e, jclass, jstring
     S.logDirty = true;
 }
 
-JNIEXPORT jstring JNICALL Java_com_ngirim_app_Native_pollAction(JNIEnv* e, jclass) {
+JNIEXPORT jstring JNICALL Java_com_udyneos_ngirim_Native_pollAction(JNIEnv* e, jclass) {
     std::lock_guard<std::mutex> lk(S.mu);
     if (S.actions.empty()) return e->NewStringUTF("");
     std::string a = S.actions.front();
@@ -1248,21 +1300,29 @@ JNIEXPORT jstring JNICALL Java_com_ngirim_app_Native_pollAction(JNIEnv* e, jclas
     return e->NewStringUTF(a.c_str());
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_selectTab(JNIEnv*, jclass, jint idx) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_selectTab(JNIEnv*, jclass, jint idx) {
     std::lock_guard<std::mutex> lk(S.mu);
     S.tabReq = idx;
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setSettings(JNIEnv* e, jclass, jboolean dark, jboolean hidden,
-                                                              jboolean trash, jstring xapkDir, jstring devName) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setSettings(JNIEnv* e, jclass, jboolean dark, jboolean hidden,
+                                                              jboolean trash, jstring xapkDir, jstring devName,
+                                                              jboolean instShizuku, jboolean autoUpdate) {
     std::string x = js(e, xapkDir), n = js(e, devName);
     std::lock_guard<std::mutex> lk(S.mu);
     if (S.dark != (bool)dark) g_themeDirty = true;
     S.dark = dark; S.showHidden = hidden; S.useTrash = trash; S.xapkDir = x; S.devName = n;
+    S.instShizuku = instShizuku; S.autoUpdate = autoUpdate;
+}
+
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setUpdateMsg(JNIEnv* e, jclass, jstring msg) {
+    std::string m = js(e, msg);
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.updMsg = m;
 }
 
 // ---- file manager
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setFm(JNIEnv* e, jclass, jstring path, jstring err, jstring filter,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setFm(JNIEnv* e, jclass, jstring path, jstring err, jstring filter,
                                                         jint sort, jboolean asc, jobjectArray names, jlongArray sizes,
                                                         jbooleanArray dirs, jlongArray mtimes) {
     std::string p = js(e, path), er = js(e, err), f = js(e, filter);
@@ -1271,12 +1331,12 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setFm(JNIEnv* e, jclass, jstri
     S.fmPath = p; S.fmErr = er; S.fmFilter = f; S.fmSort = sort; S.fmAsc = asc; S.fm = std::move(v);
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setClip(JNIEnv*, jclass, jint count, jboolean cut) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setClip(JNIEnv*, jclass, jint count, jboolean cut) {
     std::lock_guard<std::mutex> lk(S.mu);
     S.clipCount = count; S.clipCut = cut;
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setFmProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setFmProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
                                                                 jlong total, jdouble speed, jstring cur) {
     std::string c = js(e, cur);
     std::lock_guard<std::mutex> lk(S.mu);
@@ -1284,7 +1344,7 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setFmProgress(JNIEnv* e, jclas
 }
 
 // ---- APK
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setApps(JNIEnv* e, jclass, jstring filter, jobjectArray names,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setApps(JNIEnv* e, jclass, jstring filter, jobjectArray names,
                                                           jobjectArray subs, jlongArray sizes) {
     std::string f = js(e, filter);
     auto v = jitems(e, names, subs, sizes);
@@ -1292,7 +1352,7 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setApps(JNIEnv* e, jclass, jst
     S.apkFilter = f; S.apps = std::move(v);
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setApkProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setApkProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
                                                                  jlong total, jdouble speed, jstring cur) {
     std::string c = js(e, cur);
     std::lock_guard<std::mutex> lk(S.mu);
@@ -1300,39 +1360,39 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setApkProgress(JNIEnv* e, jcla
 }
 
 // ---- jaringan
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setNetPerm(JNIEnv* e, jclass, jboolean ok, jstring msg) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setNetPerm(JNIEnv* e, jclass, jboolean ok, jstring msg) {
     std::string m = js(e, msg);
     std::lock_guard<std::mutex> lk(S.mu);
     S.permOk = ok; S.permMsg = m;
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setPeers(JNIEnv* e, jclass, jobjectArray names) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setPeers(JNIEnv* e, jclass, jobjectArray names) {
     auto v = jstrings(e, names);
     std::lock_guard<std::mutex> lk(S.mu);
     S.peers = std::move(v);
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setNetInfo(JNIEnv* e, jclass, jstring addr, jstring pin,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setNetInfo(JNIEnv* e, jclass, jstring addr, jstring pin,
                                                              jstring recvDir, jboolean listening, jstring paired) {
     std::string a = js(e, addr), p = js(e, pin), r = js(e, recvDir), pr = js(e, paired);
     std::lock_guard<std::mutex> lk(S.mu);
     S.addr = a; S.pin = p; S.recvDir = r; S.listening = listening; S.pairedName = pr;
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setSendList(JNIEnv* e, jclass, jobjectArray names, jlongArray sizes) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setSendList(JNIEnv* e, jclass, jobjectArray names, jlongArray sizes) {
     auto v = jitems(e, names, nullptr, sizes);
     std::lock_guard<std::mutex> lk(S.mu);
     S.sendList = std::move(v);
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setNetProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setNetProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
                                                                  jlong total, jdouble speed, jstring cur) {
     std::string c = js(e, cur);
     std::lock_guard<std::mutex> lk(S.mu);
     S.netBusy = busy; S.netDone = done; S.netTotal = total; S.netSpeed = speed; S.netCur = c;
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setBrowser(JNIEnv* e, jclass, jboolean open, jint purpose,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setBrowser(JNIEnv* e, jclass, jboolean open, jint purpose,
                                                              jstring path, jobjectArray names, jlongArray sizes,
                                                              jbooleanArray dirs) {
     std::string p = js(e, path);
@@ -1342,7 +1402,7 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setBrowser(JNIEnv* e, jclass, 
 }
 
 // ---- FTP
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setPane(JNIEnv* e, jclass, jint idx, jstring path, jboolean remote,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setPane(JNIEnv* e, jclass, jint idx, jstring path, jboolean remote,
                                                           jstring err, jobjectArray names, jlongArray sizes,
                                                           jbooleanArray dirs) {
     if (idx < 0 || idx > 1) return;
@@ -1353,13 +1413,13 @@ JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setPane(JNIEnv* e, jclass, jin
     P.path = p; P.err = er; P.remote = remote; P.e = std::move(v);
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setBookmarks(JNIEnv* e, jclass, jobjectArray paths) {
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setBookmarks(JNIEnv* e, jclass, jobjectArray paths) {
     auto v = jstrings(e, paths);
     std::lock_guard<std::mutex> lk(S.mu);
     S.bookmarks = std::move(v);
 }
 
-JNIEXPORT void JNICALL Java_com_ngirim_app_Native_setFtpProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setFtpProgress(JNIEnv* e, jclass, jboolean busy, jlong done,
                                                                  jlong total, jdouble speed, jstring cur) {
     std::string c = js(e, cur);
     std::lock_guard<std::mutex> lk(S.mu);

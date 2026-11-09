@@ -3,16 +3,16 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Versi bisa di-override dari CI: -PversionName=2.0 -PversionCode=12
-val vName = (project.findProperty("versionName") as String?) ?: "2.0"
-val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 5
+// Versi bisa di-override dari CI: -PversionName=2.1 -PversionCode=12
+val vName = (project.findProperty("versionName") as String?) ?: "2.1"
+val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 6
 
 android {
-    namespace = "com.ngirim.app"
+    namespace = "com.udyneos.ngirim"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.ngirim.app"
+        applicationId = "com.udyneos.ngirim"
         minSdk = 30
         targetSdk = 35
         versionCode = vCode

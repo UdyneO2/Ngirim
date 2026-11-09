@@ -1,4 +1,4 @@
-package com.ngirim.app
+package com.udyneos.ngirim
 
 import android.content.Context
 import android.net.nsd.NsdManager

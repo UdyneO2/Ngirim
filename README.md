@@ -4,7 +4,7 @@ Aplikasi Android untuk transfer file, APK, foto, dan data game (`/sdcard/Android
 `/sdcard/Android/data`), lokal maupun ke perangkat lain lewat Wi-Fi yang sama.
 Akses file memakai **Shizuku** (tanpa root, tanpa SAF), UI memakai **Dear ImGui** (OpenGL ES 3).
 
-Versi saat ini: **v2.0** (lihat [CHANGELOG.md](CHANGELOG.md)).
+Versi saat ini: **v2.1** (lihat [CHANGELOG.md](CHANGELOG.md)).
 
 ## Fitur
 
@@ -20,6 +20,11 @@ Versi saat ini: **v2.0** (lihat [CHANGELOG.md](CHANGELOG.md)).
   dan riwayat perubahan di bagian bawah.
 - **Log**: log bergaya terminal dengan timestamp dan warna (OK hijau, ERR merah), setelah tab Pengaturan.
 - Live progress (persen, ukuran, kecepatan, ETA), batalkan kapan saja, file parsial otomatis dihapus.
+
+### Pembaruan dan pasang APK
+- Pengaturan > Pembaruan memeriksa rilis terbaru di `github.com/UdyneO2/Ngirim/releases`; dialog menampilkan catatan rilis,
+  lalu APK diunduh dan dipasang (Shizuku bila terhubung, jika tidak installer sistem).
+- Tab Lokal: **Buka**, **Bagikan**, **Pasang** (APK), **Ekstrak** (ZIP). Mode pasang dipilih di Pengaturan > Pasang APK.
 
 ## Persyaratan
 
@@ -89,6 +94,7 @@ berurutan, lalu ACK akhir. Seluruh jaringan dan file I/O berjalan di proses Shiz
 | Perangkat tidak muncul di *Perangkat aktif* | Pastikan saklar Terima di penerima menyala, satu Wi-Fi, dan pakai *IP manual* |
 | Tetap tidak terhubung | Matikan *AP/Client isolation* di router, atau pakai hotspot salah satu HP |
 | `Shizuku belum berjalan` | Start Shizuku lewat app Shizuku (tombol *Buka app Shizuku*); Ngirim tersambung otomatis |
+| Bind service Shizuku gagal | Ketuk **Shizuku Legacy** (jalur Shizuku.Process, tanpa UserService) atau *Hubungkan Shizuku* untuk bind manual; tidak ada coba ulang otomatis |
 | Shizuku tidak merespons | Stop lalu Start Shizuku, ketuk *Hubungkan Shizuku* |
 | Daftar `Android/data` kosong | Pastikan izin Shizuku diberikan ke Ngirim |
 | Transfer terputus saat layar mati | Biarkan layar menyala (Ngirim menahan layar saat dibuka) |
@@ -114,7 +120,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v2.0 && git push origin v2.0` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v2.1 && git push origin v2.1` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.
