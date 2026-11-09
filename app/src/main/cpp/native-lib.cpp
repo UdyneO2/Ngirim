@@ -362,7 +362,7 @@ void drawCheck(ImDrawList* dl, ImVec2 c, float s, bool on) {
 }
 
 // Baris gaya Explorer. Return: 0 tidak ada, 1 nama diketuk, 2 kotak centang diketuk.
-int rowFrame(const char* id, bool sel, float rowH, bool showBox, ImVec2& origin, float& width) {
+int rowFrame(const char* id, bool sel, float rowH, bool showBox, ImVec2& origin, float& width, bool compact = false) {
     const float d = g_density;
     origin = ImGui::GetCursorScreenPos();
     width = ImGui::GetContentRegionAvail().x;
@@ -370,11 +370,11 @@ int rowFrame(const char* id, bool sel, float rowH, bool showBox, ImVec2& origin,
     ImGui::SetNextItemAllowOverlap();
     bool nameClicked = ImGui::Selectable("##row", sel, ImGuiSelectableFlags_AllowOverlap, ImVec2(width, rowH));
     int r = nameClicked ? 1 : 0;
-    const float cbW = showBox ? 52.f * d : 0.f;
+    const float cbW = showBox ? (compact ? 32.f : 52.f) * d : 0.f;
     if (showBox) {
         ImGui::SetCursorScreenPos(origin);
         if (ImGui::InvisibleButton("##box", ImVec2(cbW, rowH))) r = 2;
-        drawCheck(ImGui::GetWindowDrawList(), ImVec2(origin.x + cbW * 0.5f, origin.y + rowH * 0.5f), 22.f * d, sel);
+        drawCheck(ImGui::GetWindowDrawList(), ImVec2(origin.x + cbW * 0.5f, origin.y + rowH * 0.5f), (compact ? 15.f : 22.f) * d, sel);
     }
     ImGui::PopID();
     origin.x += cbW;
@@ -382,19 +382,56 @@ int rowFrame(const char* id, bool sel, float rowH, bool showBox, ImVec2& origin,
     return r;
 }
 
-int fileRow(int idx, Entry& e, float rowH, bool showBox = true, bool showDate = true) {
+int fileRow(int idx, Entry& e, float rowH, bool showBox = true, bool showDate = true, bool compact = false) {
     const float d = g_density;
     ImVec2 q; float w;
-    int r = rowFrame(std::to_string(idx).c_str(), e.sel, rowH, showBox, q, w);
+    int r = rowFrame(std::to_string(idx).c_str(), e.sel, rowH, showBox, q, w, compact);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float is = rowH * 0.56f;
-    drawEntryIcon(dl, ImVec2(q.x + 4.f * d, q.y + (rowH - is) * 0.5f), is, e.dir, e.name);
+    const float is = rowH * (compact ? 0.44f : 0.56f);
+    drawEntryIcon(dl, ImVec2(q.x + (compact ? 0.f : 4.f * d), q.y + (rowH - is) * 0.5f), is, e.dir, e.name);
     const ImVec4 clip(q.x, q.y, q.x + w, q.y + rowH);
     ImFont* f = ImGui::GetFont();
-    const float fs = ImGui::GetFontSize();
-    const float tx = q.x + is + 14.f * d;
+    const float fs = ImGui::GetFontSize() * (compact ? 0.9f : 1.f);
+    const float tx = q.x + is + (compact ? 6.f : 14.f) * d;
     std::string info = e.dir ? "" : fmtSize((double)e.size);
     if (showDate && e.mtime > 0) info += (info.empty() ? "" : "   ") + fmtDate(e.mtime);
+    if (compact) {
+        // Panel sempit: nama panjang dibungkus (2 baris, lalu 3 baris berfont lebih kecil); sisa dipotong "...".
+        const float aw = clip.z - tx - 2.f * d;
+        const float one = f->CalcTextSizeA(fs, FLT_MAX, 0.f, e.name.c_str()).x;
+        if (one > aw && aw > 20.f * d) {
+            const char* end = e.name.c_str() + e.name.size();
+            auto wrapLines = [&](float sz, int maxLines, std::vector<std::string>& ls) {
+                ls.clear();
+                const char* b = e.name.c_str();
+                while (b < end && (int)ls.size() < maxLines) {
+                    const char* br = end;
+                    if (f->CalcTextSizeA(sz, FLT_MAX, 0.f, b, end).x > aw) {
+                        br = f->CalcWordWrapPositionA(sz / f->FontSize, b, end, aw);
+                        if (br <= b) br = b + 1;
+                    }
+                    ls.emplace_back(b, br);
+                    b = br;
+                    while (b < end && *b == ' ') b++;
+                }
+                return b >= end;
+            };
+            std::vector<std::string> ls;
+            float sz = fs;
+            if (!wrapLines(sz, 2, ls)) { sz = fs * 0.8f; wrapLines(sz, 3, ls); }
+            // tandai potongan bila teks belum habis pada baris terakhir
+            size_t used = 0; { const char* b = e.name.c_str(); for (auto& l : ls) { used = (size_t)((b - e.name.c_str())); b += l.size(); while (b < end && *b == ' ') b++; used = (size_t)(b - e.name.c_str()); } }
+            if (used < e.name.size() && !ls.empty()) {
+                std::string& L = ls.back();
+                while (!L.empty() && f->CalcTextSizeA(sz, FLT_MAX, 0.f, (L + "...").c_str()).x > aw) L.pop_back();
+                L += "...";
+            }
+            const float lh = sz + 1.f * d;
+            float y0 = q.y + rowH * 0.5f - lh * ls.size() * 0.5f;
+            for (auto& l : ls) { dl->AddText(f, sz, ImVec2(tx, y0), g_pal.text, l.c_str(), nullptr, 0.f, &clip); y0 += lh; }
+            return r;
+        }
+    }
     const float ty = info.empty() ? q.y + (rowH - fs) * 0.5f : q.y + rowH * 0.5f - fs - 1.f * d;
     dl->AddText(f, fs, ImVec2(tx, ty), g_pal.text, e.name.c_str(), nullptr, 0.f, &clip);
     if (!info.empty())
@@ -792,7 +829,7 @@ void drawPane(int i, float w, float h) {
     while (clip.Step()) {
         for (int r = clip.DisplayStart; r < clip.DisplayEnd; r++) {
             Entry& e = P.e[r];
-            int c = fileRow(r, e, 50.f * d, true, false);
+            int c = fileRow(r, e, 50.f * d, true, false, true);
             if (c == 2) e.sel = !e.sel;
             else if (c == 1) {
                 if (e.dir) act("FP|" + std::to_string(i) + "|OPEN|" + std::to_string(r));

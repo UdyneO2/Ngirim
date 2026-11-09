@@ -143,6 +143,10 @@ class MainActivity : Activity() {
     @Volatile private var bindingSince = 0L
     @Volatile private var bindAttempts = 0
     @Volatile private var permAskedAt = 0L
+    // Jalur cadangan (Shizuku.Process) dipakai otomatis bila bind UserService gagal 3x
+    @Volatile private var useFallback = false
+    @Volatile private var fbBusy = false
+    private val maxBindTries = 3
 
     private val conn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -320,6 +324,7 @@ class MainActivity : Activity() {
         Shizuku.removeRequestPermissionResultListener(onPerm)
         shizukuWatch.shutdownNow()
         curArgs?.let { try { Shizuku.unbindUserService(it, conn, true) } catch (_: Throwable) {} }
+        (svc as? ShellFallback)?.die()
         super.onDestroy()
     }
 
@@ -341,6 +346,7 @@ class MainActivity : Activity() {
                 if (s.asBinder().pingBinder()) return
                 svc = null
                 bindingSince = 0L
+                if (useFallback) { myPort = -1; curAddr = ""; curPin = ""; pushNetInfo() }
             }
             if (!Shizuku.pingBinder()) {
                 bindingSince = 0L
@@ -357,14 +363,50 @@ class MainActivity : Activity() {
                 Native.setShizuku(false, "Menunggu izin Shizuku - ketuk Izinkan pada dialog")
                 return
             }
+            if (useFallback) { startFallback(); return }
             val now = SystemClock.elapsedRealtime()
-            if (bindingSince == 0L || now - bindingSince > 6_000) startBind()
+            if (bindingSince == 0L || now - bindingSince > 6_000) {
+                if (bindAttempts >= maxBindTries) { switchToFallback(); return }
+                startBind()
+            }
             else Native.setShizuku(false, if (bindAttempts >= 4)
                 "Service Shizuku belum merespons (percobaan $bindAttempts). Stop lalu Start Shizuku, kemudian ketuk Hubungkan Shizuku."
             else "Menghubungkan service Shizuku (percobaan $bindAttempts)...")
         } catch (t: Throwable) {
             Native.setShizuku(false, "Shizuku error: ${t.message}")
         }
+    }
+
+    /** Bind gagal [maxBindTries]x: lepas UserService, pindah ke jalur Shizuku.Process. */
+    private fun switchToFallback() {
+        curArgs?.let { try { Shizuku.unbindUserService(it, conn, true) } catch (_: Throwable) {} }
+        curArgs = null
+        useFallback = true
+        Native.log("Shizuku: bind gagal $bindAttempts kali - pindah ke jalur Shizuku.Process")
+        startFallback()
+    }
+
+    private fun startFallback() {
+        if (fbBusy || svc != null) return
+        fbBusy = true
+        Native.setShizuku(false, "Menyambung lewat Shizuku.Process (cadangan)...")
+        Thread {
+            try {
+                val s = ShellFallback.connect(this) { Native.log(it) }
+                svc = s
+                bindAttempts = 0
+                Native.setShizuku(true, "Shizuku terhubung (jalur cadangan Process)")
+                Native.log("OK     service aktif lewat Shizuku.Process")
+                try { s.setAllowBrowse(allowBrowse) } catch (_: Throwable) {}
+                fmLoad()
+                paneLoad(0); paneLoad(1)
+            } catch (t: Throwable) {
+                Native.setShizuku(false, "Jalur cadangan gagal: ${t.message}. Ketuk Hubungkan Shizuku untuk mencoba lagi.")
+                Native.log("ERR    jalur Shizuku.Process: ${t.message}")
+            } finally {
+                fbBusy = false
+            }
+        }.start()
     }
 
     private fun startBind() {
@@ -385,6 +427,11 @@ class MainActivity : Activity() {
         when (p[0]) {
             "CONNECT" -> {
                 bindingSince = 0L; bindAttempts = 0; permAskedAt = 0L
+                if (useFallback) {
+                    useFallback = false
+                    (svc as? ShellFallback)?.die()
+                    svc = null
+                }
                 shizukuWatch.execute { shizukuTick() }
             }
             "OPEN_SHIZUKU" -> runOnUiThread {
