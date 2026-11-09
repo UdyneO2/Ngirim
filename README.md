@@ -1,37 +1,67 @@
 # Ngirim
 
-Aplikasi Android untuk transfer file, APK, foto, dan data game (`/sdcard/Android/obb` dan
-`/sdcard/Android/data`), lokal maupun ke perangkat lain lewat Wi-Fi yang sama.
-Akses file memakai **Shizuku** (tanpa root, tanpa SAF), UI memakai **Dear ImGui** (OpenGL ES 3).
+Berbagi aplikasi dengan mudah. Ngirim menggabungkan pengirim file lewat Wi-Fi, FTP dua panel, dan
+file manager dalam satu aplikasi Android. Akses ke `Android/data` dan `Android/obb` lewat Shizuku, jadi
+tanpa root dan tanpa SAF.
 
-Versi saat ini: **v2.1** (lihat [CHANGELOG.md](CHANGELOG.md)).
+Versi sekarang v2.1. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
+[GitHub Releases](https://github.com/UdyneO2/Ngirim/releases).
 
-## Fitur
+## Yang sudah ada
 
-- **Antarmuka bergaya Windows 10**: kontrol datar, aksen biru, tema Terang atau Gelap (Pengaturan).
-- **Lokal = file manager**: salin, potong, tempel, hapus (ke tempat sampah), ganti nama, folder baru, properti,
-  urutkan, cari, tampilkan file tersembunyi, dan **akses cepat** ke folder (Internal, Download, DCIM, Pictures,
-  Data, OBB, Ngirim, plus folder yang Anda sematkan). Bisa masuk ke `Android/data` dan `Android/obb` lewat Shizuku.
-- **Backup APK ke XAPK**: tombol *Backup APK* di tab Lokal membuka pemilih aplikasi (cari, centang banyak).
-  Hasilnya satu file `.xapk` (manifest.json, ikon, base + split APK) dengan opsi OBB dan DATA game.
-- **Wi-Fi (antar perangkat)**: saklar Terima, daftar perangkat aktif otomatis, kirim file dan **folder** dengan PIN.
-- **FTP (dua panel)**: dua folder berdampingan; panel kanan bisa diarahkan ke perangkat yang sudah dipairing.
-- **Pengaturan**: tema, file tersembunyi, tempat sampah, folder hasil XAPK, nama perangkat, status Shizuku,
-  dan riwayat perubahan di bagian bawah.
-- **Log**: log bergaya terminal dengan timestamp dan warna (OK hijau, ERR merah), setelah tab Pengaturan.
-- Live progress (persen, ukuran, kecepatan, ETA), batalkan kapan saja, file parsial otomatis dihapus.
+Kirim dan terima
+- Transfer antar-HP di Wi-Fi yang sama, dipasangkan dengan PIN 6 digit
+- Kirim file maupun folder lengkap dengan isinya
+- Saklar Terima ON/OFF; HP lain yang aktif muncul sendiri di daftar
+- Progress langsung (persen, kecepatan, sisa waktu) dan bisa dibatalkan
 
-### Pembaruan dan pasang APK
-- Pengaturan > Pembaruan memeriksa rilis terbaru di `github.com/UdyneO2/Ngirim/releases`; dialog menampilkan catatan rilis,
-  lalu APK diunduh dan dipasang (Shizuku bila terhubung, jika tidak installer sistem).
-- Tab Lokal: **Buka**, **Bagikan**, **Pasang** (APK), **Ekstrak** (ZIP). Mode pasang dipilih di Pengaturan > Pasang APK.
+FTP dua panel
+- Dua folder berdampingan dengan pintasan folder dan favorit sendiri
+- Panel kanan bisa diarahkan ke HP lain yang sudah dipasangkan, salin ke dua arah
+
+File manager (tab Lokal)
+- Salin, potong, tempel, hapus (ke tempat sampah), ubah nama, folder baru, properti, cari, urutkan
+- Buka file, bagikan, pasang APK, ekstrak ZIP
+- Akses cepat ke Download, DCIM, Pictures, Data, OBB, dan folder yang kamu sematkan
+
+Backup aplikasi
+- Pilih beberapa aplikasi lalu simpan langsung jadi `.xapk` (manifest, ikon, base + split APK)
+- OBB dan DATA game bisa ikut disertakan
+
+Lainnya
+- Tema Terang dan Gelap, tampilan terinspirasi Windows 10
+- Cek pembaruan dari GitHub Release dengan catatan rilis, lalu pasang langsung
+- Mode pasang APK: installer sistem atau Shizuku (senyap)
+- Shizuku Legacy: jalur cadangan lewat Shizuku.Process bila bind service gagal
+- Log dengan timestamp dan warna
+
+## Rencana
+
+Belum janji, ini baru daftar ide:
+- Enkripsi transfer (TLS) supaya aman di jaringan umum
+- Lanjutkan transfer yang terputus
+- Pairing lewat QR agar tidak perlu mengetik PIN
+- Kirim ke beberapa perangkat sekaligus
+- Pasang XAPK/APKS langsung dari file manager
+- Buat arsip ZIP, pratinjau gambar, dan multi-pilih lewat geser
+- Pilihan warna aksen dan bahasa Inggris
+
+Punya usul? Buka issue di repo.
 
 ## Persyaratan
 
-- Android 11+ (minSdk 30), diuji target Android 15.
-- [Shizuku](https://shizuku.rikka.app/) terpasang dan **sedang berjalan** (wireless debugging atau root).
-- Untuk transfer Wi-Fi: kedua perangkat di Wi-Fi/hotspot yang sama dan izin *Perangkat di sekitar*
-  (Android 13+).
+- Android 11 atau lebih baru (minSdk 30), target Android 15
+- [Shizuku](https://shizuku.rikka.app/) terpasang dan sedang berjalan (wireless debugging atau root)
+- Untuk Wi-Fi: dua perangkat di jaringan/hotspot yang sama, dan izin Perangkat di sekitar (Android 13+)
+
+## Kredit dan sumber
+
+- [Dear ImGui](https://github.com/ocornut/imgui) oleh Omar Cornut, lisensi MIT. Dipakai untuk seluruh antarmuka.
+- [Shizuku](https://github.com/RikkaApps/Shizuku) dan Shizuku-API oleh RikkaApps, lisensi Apache 2.0. Dasar akses file tanpa root.
+- Font Roboto bawaan sistem Android; font monospace sistem untuk tab Log.
+- Android NSD (mDNS) untuk menemukan perangkat, GitHub Releases API untuk cek pembaruan.
+- Gaya visual terinspirasi antarmuka Windows 10.
+- Dibuat dan dirawat oleh [UdyneO2](https://github.com/UdyneO2).
 
 ## Cara pakai
 
