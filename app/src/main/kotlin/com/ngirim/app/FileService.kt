@@ -568,7 +568,7 @@ class FileService : IFileService.Stub() {
 
     /**
      * Satu job = {out, obb, icon_b64, manifest{...}, apks:[{path,entry}]}.
-     * Hasil: ZIP (.xapk) berisi manifest.json, icon.png, APK (base + split), dan opsional Android/obb/<pkg>/*.
+     * Hasil: ZIP (.xapk) berisi manifest.json, icon.png, APK (base + split), dan opsional isi OBB/DATA (Android/obb/<pkg> dan Android/data/<pkg>).
      */
     private fun doXapk(jobs: Array<String>, cb: IProgressCallback) {
         val parsed = jobs.map { XJob(JSONObject(it)) }
