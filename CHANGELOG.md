@@ -2,6 +2,10 @@
 
 ## v2.0 - 2026-11-09
 
+### Perbaikan
+- Bind UserService Shizuku gagal 3x: otomatis pindah ke jalur cadangan via Shizuku.Process (tombol Hubungkan Shizuku mencoba bind lagi)
+- FTP: kotak centang dan ikon diperkecil, nama panjang dibungkus hingga 3 baris
+
 ### Baru
 - **UI bergaya Windows 10**: kontrol datar, aksen biru #0078D7, ikon file/folder, tema Terang (default) dan Gelap
 - **Tab Lokal menjadi file manager**: salin, potong, tempel, hapus (tempat sampah), ganti nama, folder baru,
