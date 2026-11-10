@@ -665,7 +665,7 @@ void drawFiles() {
     if (h < 150.f * d) h = 150.f * d;
     ImGui::BeginChild("fm_list", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
     if (!S.fmErr.empty()) ImGui::TextColored(g_pal.err, "%s", i18n::tr(S.fmErr).c_str());
-    else if (S.fm.empty()) ImGui::TextColored(g_pal.dim, S.fmFilter.empty() ? T("Folder ini kosong.") : T("Tidak ada yang cocok dengan pencarian."));
+    else if (S.fm.empty()) ImGui::TextColored(g_pal.dim, "%s", S.fmFilter.empty() ? T("Folder ini kosong.") : T("Tidak ada yang cocok dengan pencarian."));
     ImGuiListClipper clip;
     clip.Begin((int)S.fm.size());
     while (clip.Step()) {
@@ -702,7 +702,7 @@ void drawApk() {
     beginPanel("apk_head");
     bool first = true;
     if (wrapButton(T("< Kembali ke file manager##apkback"), first)) S.apkOpen = false;
-    ImGui::TextColored(g_pal.accent, T("Backup aplikasi"));
+    ImGui::TextColored(g_pal.accent, "%s", T("Backup aplikasi"));
     ImGui::BeginDisabled(S.aBusy);
     ImGui::TextColored(g_pal.dim, "%s", T("Format backup"));
     first = true;
@@ -782,7 +782,7 @@ void drawNet() {
     if (toggleSwitch("##rx", S.listening)) act(S.listening ? "RX_OFF" : "RX_ON");
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(S.listening ? ok : g_pal.dim, S.listening ? T("Terima AKTIF - terlihat oleh perangkat lain") : T("Terima MATI"));
+    ImGui::TextColored(S.listening ? ok : g_pal.dim, "%s", S.listening ? T("Terima AKTIF - terlihat oleh perangkat lain") : T("Terima MATI"));
     ImGui::TextWrapped(T("Folder simpan: %s"), S.recvDir.empty() ? T("(belum dipilih)") : S.recvDir.c_str());
     ImGui::BeginDisabled(S.listening);
     if (ImGui::Button(T("Ubah folder simpan"))) act("BPURPOSE|2");
@@ -878,7 +878,7 @@ void drawPane(int i, float w, float h) {
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseClicked(0)) S.active = i;
 
     if (i == 0) {
-        ImGui::TextColored(g_pal.accent, T("HP ini"));
+        ImGui::TextColored(g_pal.accent, "%s", T("HP ini"));
     } else {
         bool first = true;
         if (wrapButton(T("HP ini##src0"), first, !P.remote)) act("FP|1|SRC|0");
@@ -921,7 +921,7 @@ void drawFtp() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f * d, 4.f * d));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.f * d, 6.f * d));
     beginPanel("ftp_head");
-    ImGui::TextColored(g_pal.accent, T("Panel aktif: %s"), S.active == 0 ? T("kiri") : T("kanan"));
+    ImGui::TextColored(g_pal.accent, "%s", T("Panel aktif: %s"), S.active == 0 ? T("kiri") : T("kanan"));
     quickAccess("FP|" + ai, A.path, false);
     bool isBm = false;
     for (auto& b : S.bookmarks) if (b == A.path) isBm = true;
@@ -1089,7 +1089,7 @@ void drawSettings() {
 
     ImGui::SeparatorText(T("Tentang"));
     ImGui::SetWindowFontScale(1.3f);
-    ImGui::TextColored(g_pal.accent, T("Ngirim: Berbagi aplikasi dengan mudah"));
+    ImGui::TextColored(g_pal.accent, "%s", T("Ngirim: Berbagi aplikasi dengan mudah"));
     ImGui::SetWindowFontScale(1.f);
     ImGui::TextWrapped("Sender, FTP & File manager");
     dimWrapped(T("Kirim lewat Wi-Fi, kelola dua folder sekaligus, dan backup aplikasi ke XAPK, semuanya dalam satu app."));
