@@ -713,7 +713,7 @@ void drawApk() {
     if (wrapButton(S.apkData ? T("[x] Sertakan DATA game##dat") : T("[ ] Sertakan DATA game##dat"), first, S.apkData)) S.apkData = !S.apkData;
     ImGui::EndDisabled();
     if (S.apkFmt == 0 && S.apkData) dimWrapped(T("DATA bisa sangat besar dan bukan bagian standar XAPK; hanya terbaca installer yang mendukungnya."));
-    ImGui::TextColored(g_pal.dim, "%s", T("Tujuan: %s"), tailEllipsis(S.xapkDir, 48).c_str());
+    ImGui::TextColored(g_pal.dim, T("Tujuan: %s"), tailEllipsis(S.xapkDir, 48).c_str());
     first = true;
     if (wrapButton(T("Cari...##apk"), first, !S.apkFilter.empty())) act(S.apkFilter.empty() ? "APK|FIND" : "APK|FINDX");
     if (wrapButton(S.apkSystem ? T("Sembunyikan app sistem##sys") : T("Tampilkan app sistem##sys"), first)) {
@@ -744,7 +744,7 @@ void drawApk() {
     touchScroll();
     ImGui::EndChild();
 
-    ImGui::TextColored(g_pal.dim, "%s", T("%d aplikasi  |  %d dipilih (%s)"), (int)S.apps.size(), n, fmtSize((double)sizeSel(S.apps)).c_str());
+    ImGui::TextColored(g_pal.dim, T("%d aplikasi  |  %d dipilih (%s)"), (int)S.apps.size(), n, fmtSize((double)sizeSel(S.apps)).c_str());
     if (!S.aBusy) {
         ImGui::BeginDisabled(!S.shizuku || n == 0);
         char lb[96];
@@ -774,7 +774,7 @@ void drawNet() {
     if (!S.permOk) {
         if (ImGui::Button(T("Berikan izin / periksa ulang"), ImVec2(-FLT_MIN, 52.f * d))) act("NET_PERM");
     }
-    if (!S.shizuku) ImGui::TextDisabled(T("Shizuku harus terhubung dulu."));
+    if (!S.shizuku) ImGui::TextDisabled("%s", T("Shizuku harus terhubung dulu."));
     ImGui::BeginDisabled(!(S.permOk && S.shizuku));
 
     // ---- Terima (receiver)
@@ -793,7 +793,7 @@ void drawNet() {
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextWrapped(T("Izinkan jelajah FTP ke /sdcard"));
+    ImGui::TextWrapped("%s", T("Izinkan jelajah FTP ke /sdcard"));
     if (S.listening) {
         ImGui::Text(T("Alamat: %s"), S.addr.c_str());
         ImGui::Text("PIN:");
@@ -808,8 +808,8 @@ void drawNet() {
     if (ImGui::Button(T("Segarkan"))) act("NET_SCAN");
     ImGui::SameLine();
     if (ImGui::Button(T("IP manual"))) act("NET_MANUAL");
-    if (S.peers.empty()) ImGui::TextDisabled(T("Belum ada. Nyalakan Terima di perangkat lain (satu Wi-Fi)."));
-    else ImGui::TextDisabled(T("Ketuk perangkat, lalu masukkan PIN dari layarnya."));
+    if (S.peers.empty()) ImGui::TextDisabled("%s", T("Belum ada. Nyalakan Terima di perangkat lain (satu Wi-Fi)."));
+    else ImGui::TextDisabled("%s", T("Ketuk perangkat, lalu masukkan PIN dari layarnya."));
     for (int i = 0; i < (int)S.peers.size(); i++) {
         ImVec2 q = ImGui::GetCursorScreenPos();
         std::string l = "##p" + std::to_string(i);
@@ -828,13 +828,13 @@ void drawNet() {
         ImGui::BeginDisabled(S.netBusy);
         if (ImGui::Button(T("Putus"))) act("NET_DISCONNECT");
         ImGui::EndDisabled();
-        ImGui::TextDisabled(T("Jelajah dan salin dua arah ada di tab FTP."));
+        ImGui::TextDisabled("%s", T("Jelajah dan salin dua arah ada di tab FTP."));
         ImGui::BeginDisabled(S.netBusy);
         if (ImGui::Button("+ File / folder")) act("BPURPOSE|1");
         ImGui::SameLine();
         if (ImGui::Button(T("Kosongkan"))) { S.sendList.clear(); act("NET_CLEAR"); }
         ImGui::EndDisabled();
-        if (S.sendList.empty()) ImGui::TextDisabled(T("Belum ada file/folder dipilih."));
+        if (S.sendList.empty()) ImGui::TextDisabled("%s", T("Belum ada file/folder dipilih."));
         const int kShow = 6;
         for (int i = 0; i < (int)S.sendList.size() && i < kShow; i++) ImGui::TextWrapped("%s", S.sendList[i].name.c_str());
         if ((int)S.sendList.size() > kShow) ImGui::TextDisabled(T("... dan %d lainnya"), (int)S.sendList.size() - kShow);
@@ -921,7 +921,7 @@ void drawFtp() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f * d, 4.f * d));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.f * d, 6.f * d));
     beginPanel("ftp_head");
-    ImGui::TextColored(g_pal.accent, "%s", T("Panel aktif: %s"), S.active == 0 ? T("kiri") : T("kanan"));
+    ImGui::TextColored(g_pal.accent, T("Panel aktif: %s"), S.active == 0 ? T("kiri") : T("kanan"));
     quickAccess("FP|" + ai, A.path, false);
     bool isBm = false;
     for (auto& b : S.bookmarks) if (b == A.path) isBm = true;
@@ -955,7 +955,7 @@ void drawFtp() {
     ImGui::RadioButton(T("Pindah"), &S.fMove, 1);
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextColored(g_pal.dim, "%s", T("Dipilih: kiri %d, kanan %d"), nL, nR);
+    ImGui::TextColored(g_pal.dim, T("Dipilih: kiri %d, kanan %d"), nL, nR);
     ImGui::EndDisabled();
 
     if (!S.fBusy) {
