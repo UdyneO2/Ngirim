@@ -642,11 +642,11 @@ void drawFiles() {
     ImGui::EndDisabled();
 
     // akses cepat
-    ImGui::TextColored(g_pal.dim, T("Akses cepat"));
+    ImGui::TextColored(g_pal.dim, "%s", T("Akses cepat"));
     quickAccess("FM", S.fmPath, true);
 
     // urutkan + cari
-    ImGui::TextColored(g_pal.dim, T("Urutkan"));
+    ImGui::TextColored(g_pal.dim, "%s", T("Urutkan"));
     first = true;
     const char* sk[] = {T("Nama"), T("Ukuran"), T("Tanggal"), T("Jenis")};
     for (int k = 0; k < 4; k++) {
@@ -704,7 +704,7 @@ void drawApk() {
     if (wrapButton(T("< Kembali ke file manager##apkback"), first)) S.apkOpen = false;
     ImGui::TextColored(g_pal.accent, T("Backup aplikasi"));
     ImGui::BeginDisabled(S.aBusy);
-    ImGui::TextColored(g_pal.dim, T("Format backup"));
+    ImGui::TextColored(g_pal.dim, "%s", T("Format backup"));
     first = true;
     if (wrapButton(T("XAPK (satu file)##f"), first, S.apkFmt == 0)) { S.apkFmt = 0; }
     if (wrapButton(T("APK + split (folder)##f"), first, S.apkFmt == 1)) { S.apkFmt = 1; }
@@ -713,7 +713,7 @@ void drawApk() {
     if (wrapButton(S.apkData ? T("[x] Sertakan DATA game##dat") : T("[ ] Sertakan DATA game##dat"), first, S.apkData)) S.apkData = !S.apkData;
     ImGui::EndDisabled();
     if (S.apkFmt == 0 && S.apkData) dimWrapped(T("DATA bisa sangat besar dan bukan bagian standar XAPK; hanya terbaca installer yang mendukungnya."));
-    ImGui::TextColored(g_pal.dim, T("Tujuan: %s"), tailEllipsis(S.xapkDir, 48).c_str());
+    ImGui::TextColored(g_pal.dim, "%s", T("Tujuan: %s"), tailEllipsis(S.xapkDir, 48).c_str());
     first = true;
     if (wrapButton(T("Cari...##apk"), first, !S.apkFilter.empty())) act(S.apkFilter.empty() ? "APK|FIND" : "APK|FINDX");
     if (wrapButton(S.apkSystem ? T("Sembunyikan app sistem##sys") : T("Tampilkan app sistem##sys"), first)) {
@@ -732,7 +732,7 @@ void drawApk() {
     float h = ImGui::GetContentRegionAvail().y - footer;
     if (h < 150.f * d) h = 150.f * d;
     ImGui::BeginChild("apk_list", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
-    if (S.apps.empty()) ImGui::TextColored(g_pal.dim, T("Tidak ada aplikasi."));
+    if (S.apps.empty()) ImGui::TextColored(g_pal.dim, "%s", T("Tidak ada aplikasi."));
     ImGuiListClipper clip;
     clip.Begin((int)S.apps.size());
     while (clip.Step()) {
@@ -744,7 +744,7 @@ void drawApk() {
     touchScroll();
     ImGui::EndChild();
 
-    ImGui::TextColored(g_pal.dim, T("%d aplikasi  |  %d dipilih (%s)"), (int)S.apps.size(), n, fmtSize((double)sizeSel(S.apps)).c_str());
+    ImGui::TextColored(g_pal.dim, "%s", T("%d aplikasi  |  %d dipilih (%s)"), (int)S.apps.size(), n, fmtSize((double)sizeSel(S.apps)).c_str());
     if (!S.aBusy) {
         ImGui::BeginDisabled(!S.shizuku || n == 0);
         char lb[96];
@@ -888,13 +888,13 @@ void drawPane(int i, float w, float h) {
         ImGui::EndDisabled();
     }
     ImGui::TextColored(g_pal.dim, "%s", tailEllipsis(P.path, 30).c_str());
-    if (i == 1 && S.pairedName.empty() && !P.remote) ImGui::TextColored(g_pal.dim, T("Pairing dulu di tab Wi-Fi."));
+    if (i == 1 && S.pairedName.empty() && !P.remote) ImGui::TextColored(g_pal.dim, "%s", T("Pairing dulu di tab Wi-Fi."));
     if (!P.err.empty()) ImGui::TextColored(g_pal.err, "%s", P.err.c_str());
 
     float lh = ImGui::GetContentRegionAvail().y - 4.f * d;
     if (lh < 60.f * d) lh = 60.f * d;
     ImGui::BeginChild((id + "_list").c_str(), ImVec2(0, lh), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-    if (P.e.empty() && P.err.empty()) ImGui::TextColored(g_pal.dim, T("Kosong"));
+    if (P.e.empty() && P.err.empty()) ImGui::TextColored(g_pal.dim, "%s", T("Kosong"));
     ImGuiListClipper clip;
     clip.Begin((int)P.e.size());
     while (clip.Step()) {
@@ -955,7 +955,7 @@ void drawFtp() {
     ImGui::RadioButton(T("Pindah"), &S.fMove, 1);
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextColored(g_pal.dim, T("Dipilih: kiri %d, kanan %d"), nL, nR);
+    ImGui::TextColored(g_pal.dim, "%s", T("Dipilih: kiri %d, kanan %d"), nL, nR);
     ImGui::EndDisabled();
 
     if (!S.fBusy) {
@@ -1144,7 +1144,7 @@ void drawBrowser() {
     float h = ImGui::GetContentRegionAvail().y - 75.f * d;
     if (h < 100.f * d) h = 100.f * d;
     ImGui::BeginChild("blist", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
-    if (S.bEntries.empty()) ImGui::TextColored(g_pal.dim, T("Folder kosong / tidak bisa dibaca."));
+    if (S.bEntries.empty()) ImGui::TextColored(g_pal.dim, "%s", T("Folder kosong / tidak bisa dibaca."));
     ImGuiListClipper clip;
     clip.Begin((int)S.bEntries.size());
     while (clip.Step()) {
