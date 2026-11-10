@@ -467,6 +467,8 @@ class MainActivity : Activity() {
             }
             // pengaturan
             "SET" -> setPref(p[1], p[2] == "1")
+            "ACCENT" -> { accent = (p.getOrNull(1)?.toIntOrNull() ?: 0).coerceIn(0, 31); prefs.edit().putInt("accent", accent).apply(); pushSettings() }
+            "LANG" -> { lang = (p.getOrNull(1) ?: "auto").take(8); prefs.edit().putString("lang", lang).apply(); pushSettings() }
             "UPD_CHECK" -> checkUpdate(true)
             "SET_NAME" -> askText("Nama perangkat", "nama", false, myName) { v ->
                 if (v.isNotEmpty()) { myName = v.take(40); prefs.edit().putString("devName", myName).apply(); pushSettings() }
@@ -786,10 +788,10 @@ class MainActivity : Activity() {
             addView(et)
         }
         AlertDialog.Builder(this)
-            .setTitle(title)
+            .setTitle(tr(title))
             .setView(box)
             .setPositiveButton("OK") { _, _ -> onOk(et.text.toString().trim()) }
-            .setNegativeButton("Batal", null)
+            .setNegativeButton(tr("Batal"), null)
             .show()
     }
 
@@ -921,6 +923,8 @@ class MainActivity : Activity() {
         showHidden = prefs.getBoolean("hidden", false)
         useTrash = prefs.getBoolean("trash", true)
         instShizuku = prefs.getBoolean("inst", false)
+        accent = prefs.getInt("accent", 0)
+        lang = prefs.getString("lang", "auto") ?: "auto"
         autoUpdate = prefs.getBoolean("autoupd", true)
         xapkDir = prefs.getString("xapkDir", xapkDir) ?: xapkDir
         myName = prefs.getString("devName", myName) ?: myName
@@ -928,7 +932,19 @@ class MainActivity : Activity() {
         fmPublish()
     }
 
-    private fun pushSettings() = Native.setSettings(dark, showHidden, useTrash, xapkDir, myName, instShizuku, autoUpdate)
+    private var accent = 0
+    private var lang = "auto"
+
+    /** Bahasa sistem: kode 2 huruf; "in" lama dipetakan ke "id". */
+    private fun sysLang(): String {
+        val l = java.util.Locale.getDefault().language.lowercase()
+        return if (l == "in") "id" else l
+    }
+
+    private fun tr(s: String): String = try { Native.tr(s) } catch (_: Throwable) { s }
+
+    private fun pushSettings() = Native.setSettings(
+        dark, showHidden, useTrash, xapkDir, myName, instShizuku, autoUpdate, accent, lang, sysLang())
 
     private fun setPref(key: String, v: Boolean) {
         val e = prefs.edit()
@@ -945,9 +961,9 @@ class MainActivity : Activity() {
     }
 
     private fun confirm(title: String, msg: String, yes: String, onYes: () -> Unit) = runOnUiThread {
-        AlertDialog.Builder(this).setTitle(title).setMessage(msg)
-            .setPositiveButton(yes) { _, _ -> onYes() }
-            .setNegativeButton("Batal", null).show()
+        AlertDialog.Builder(this).setTitle(tr(title)).setMessage(tr(msg))
+            .setPositiveButton(tr(yes)) { _, _ -> onYes() }
+            .setNegativeButton(tr("Batal"), null).show()
     }
 
     private fun fmt(b: Long): String {
@@ -1132,7 +1148,7 @@ class MainActivity : Activity() {
         i.type = if (fs.size == 1) ShareProvider.mimeOf(fs[0].name) else "*/*"
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         i.clipData = ClipData.newRawUri(fs[0].name, uris[0]).also { cd -> for (u in uris.drop(1)) cd.addItem(ClipData.Item(u)) }
-        try { startActivity(Intent.createChooser(i, "Bagikan lewat").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        try { startActivity(Intent.createChooser(i, tr("Bagikan lewat")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         catch (_: ActivityNotFoundException) { Native.log("ERR    tidak ada aplikasi untuk berbagi") }
     }
 
@@ -1141,7 +1157,7 @@ class MainActivity : Activity() {
         override fun onLog(msg: String) { Native.log(msg) }
         override fun onFinish(ok: Boolean, message: String, done: Long, total: Long) {
             Native.log((if (ok) "OK     " else "ERR    ") + message)
-            runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
+            runOnUiThread { Toast.makeText(this@MainActivity, tr(message), Toast.LENGTH_LONG).show() }
         }
     }
 
@@ -1204,10 +1220,10 @@ class MainActivity : Activity() {
         val notes = Updater.plainNotes(r.body).ifEmpty { "(Tidak ada catatan rilis)" }
         val via = if (svc != null) "dipasang lewat Shizuku" else "dipasang lewat installer sistem"
         AlertDialog.Builder(this)
-            .setTitle("Pembaruan ${r.tag}")
-            .setMessage("Terpasang: ${BuildConfig.VERSION_NAME}\nUkuran unduhan${mb}, $via.\n\nYang baru:\n$notes")
-            .setPositiveButton("Perbarui") { _, _ -> downloadAndInstall(r) }
-            .setNegativeButton("Nanti", null)
+            .setTitle(tr("Pembaruan ${r.tag}"))
+            .setMessage(tr("Terpasang") + ": ${BuildConfig.VERSION_NAME}\n" + tr("Ukuran unduhan") + "${mb}, " + tr(via) + ".\n\n" + tr("Yang baru") + ":\n$notes")
+            .setPositiveButton(tr("Perbarui")) { _, _ -> downloadAndInstall(r) }
+            .setNegativeButton(tr("Nanti"), null)
             .show()
     }
 
@@ -1219,8 +1235,8 @@ class MainActivity : Activity() {
             setPadding(48, 32, 48, 8); addView(label); addView(bar)
         }
         val stop = java.util.concurrent.atomic.AtomicBoolean(false)
-        val dlg = AlertDialog.Builder(this).setTitle("Memperbarui ke ${r.tag}").setView(box)
-            .setCancelable(false).setNegativeButton("Batal") { _, _ -> stop.set(true) }.show()
+        val dlg = AlertDialog.Builder(this).setTitle(tr("Memperbarui ke ${r.tag}")).setView(box)
+            .setCancelable(false).setNegativeButton(tr("Batal")) { _, _ -> stop.set(true) }.show()
         Thread {
             try {
                 val root = ShareProvider.root(this)
@@ -1316,17 +1332,17 @@ class MainActivity : Activity() {
                     val e = sel[0]
                     val full = joinPath(fmPath, e.name)
                     val size = if (e.isDir) s.pathSize(full) else e.size
-                    msg.append("Nama: ${e.name}\n")
-                    msg.append("Lokasi: $fmPath\n")
-                    msg.append("Jenis: ${if (e.isDir) "Folder" else "File ${e.name.substringAfterLast('.', "").uppercase()}".trim()}\n")
-                    msg.append("Ukuran: ${fmt(size)} ($size byte)\n")
-                    if (e.mtime > 0) msg.append("Diubah: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(e.mtime))}")
+                    msg.append(tr("Nama") + ": ${e.name}\n")
+                    msg.append(tr("Lokasi") + ": $fmPath\n")
+                    msg.append(tr("Jenis") + ": ${if (e.isDir) tr("Folder") else "File ${e.name.substringAfterLast('.', "").uppercase()}".trim()}\n")
+                    msg.append(tr("Ukuran") + ": ${fmt(size)} ($size byte)\n")
+                    if (e.mtime > 0) msg.append(tr("Diubah") + ": ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(e.mtime))}")
                 } else {
                     val total = sel.sumOf { if (it.isDir) s.pathSize(joinPath(fmPath, it.name)) else it.size }
-                    msg.append("${sel.size} item (${sel.count { it.isDir }} folder)\nLokasi: $fmPath\nTotal ukuran: ${fmt(total)}")
+                    msg.append("${sel.size} item (${sel.count { it.isDir }} folder)\n" + tr("Lokasi") + ": $fmPath\n" + tr("Total ukuran") + ": ${fmt(total)}")
                 }
-            } catch (t: Throwable) { msg.append("Gagal membaca properti: ${t.message}") }
-            runOnUiThread { AlertDialog.Builder(this).setTitle("Properti").setMessage(msg.toString()).setPositiveButton("OK", null).show() }
+            } catch (t: Throwable) { msg.append(tr("Gagal membaca properti: ${t.message}")) }
+            runOnUiThread { AlertDialog.Builder(this).setTitle(tr("Properti")).setMessage(msg.toString()).setPositiveButton("OK", null).show() }
         }
     }
 

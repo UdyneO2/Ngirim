@@ -2,6 +2,18 @@
 
 Versi terbaru di atas. Di dalam aplikasi, riwayat ini ada di Pengaturan > Riwayat perubahan.
 
+## v2.2 (10 Nov 2026)
+
+- Warna aksen: tujuh pilihan (biru, hijau, ungu, oranye, merah, teal, merah muda) di Pengaturan > Tampilan.
+  Tombol, pilihan, dan header ikut berubah, baik di tema Terang maupun Gelap.
+- Bahasa: Indonesia dan Inggris. Default "Otomatis": kalau bahasa sistem Indonesia, aplikasi pakai Indonesia,
+  selain itu Inggris. Bisa dipaksa manual di Pengaturan > Bahasa.
+- Semua teks ikut diterjemahkan: antarmuka, dialog, toast, dan pesan di Log.
+- Bahasa lain tinggal menambah satu tabel di `i18n.cpp` (lihat README). Aksara non-Latin belum, karena
+  butuh font tambahan.
+- Riwayat perubahan di Pengaturan dipadatkan jadi satu bagian yang bisa dibuka-tutup untuk semua versi.
+- README sekarang berisi daftar centang fitur yang sudah ada dan yang mungkin dibuat.
+
 ## v2.1 (9 Nov 2026)
 
 - Cek pembaruan dari GitHub Release. Ada dialog konfirmasi berisi catatan rilis, lalu APK diunduh dan

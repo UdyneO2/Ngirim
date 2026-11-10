@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(imgui)
 
 add_library(ngirim SHARED
     native-lib.cpp
+    i18n.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp

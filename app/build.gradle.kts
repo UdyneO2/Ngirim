@@ -3,9 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Versi bisa di-override dari CI: -PversionName=2.1 -PversionCode=12
-val vName = (project.findProperty("versionName") as String?) ?: "2.1"
-val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 6
+// Versi bisa di-override dari CI: -PversionName=2.2 -PversionCode=7
+val vName = (project.findProperty("versionName") as String?) ?: "2.2"
+val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 7
 
 android {
     namespace = "com.udyneos.ngirim"

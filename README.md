@@ -4,49 +4,67 @@ Berbagi aplikasi dengan mudah. Ngirim menggabungkan pengirim file lewat Wi-Fi, F
 file manager dalam satu aplikasi Android. Akses ke `Android/data` dan `Android/obb` lewat Shizuku, jadi
 tanpa root dan tanpa SAF.
 
-Versi sekarang v2.1. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
+Versi sekarang v2.2. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
 [GitHub Releases](https://github.com/UdyneO2/Ngirim/releases).
 
-## Yang sudah ada
+## Fitur
+
+Yang sudah ada (`[x]`) dan yang mungkin dibuat (`[ ]`). Daftar `[ ]` baru ide, belum janji.
 
 Kirim dan terima
-- Transfer antar-HP di Wi-Fi yang sama, dipasangkan dengan PIN 6 digit
-- Kirim file maupun folder lengkap dengan isinya
-- Saklar Terima ON/OFF; HP lain yang aktif muncul sendiri di daftar
-- Progress langsung (persen, kecepatan, sisa waktu) dan bisa dibatalkan
+- [x] Transfer antar-HP di Wi-Fi yang sama, dipasangkan dengan PIN 6 digit
+- [x] Kirim file maupun folder lengkap dengan isinya
+- [x] Saklar Terima ON/OFF; HP lain yang aktif muncul sendiri di daftar
+- [x] Progress langsung (persen, kecepatan, sisa waktu) dan bisa dibatalkan
+- [ ] Enkripsi transfer (TLS) supaya aman di jaringan umum
+- [ ] Lanjutkan transfer yang terputus
+- [ ] Pairing lewat QR agar tidak perlu mengetik PIN
+- [ ] Kirim ke beberapa perangkat sekaligus
 
 FTP dua panel
-- Dua folder berdampingan dengan pintasan folder dan favorit sendiri
-- Panel kanan bisa diarahkan ke HP lain yang sudah dipasangkan, salin ke dua arah
+- [x] Dua folder berdampingan dengan pintasan folder dan favorit sendiri
+- [x] Panel kanan bisa diarahkan ke HP lain yang sudah dipasangkan, salin ke dua arah
+- [ ] Multi-pilih lewat geser
 
 File manager (tab Lokal)
-- Salin, potong, tempel, hapus (ke tempat sampah), ubah nama, folder baru, properti, cari, urutkan
-- Buka file, bagikan, pasang APK, ekstrak ZIP
-- Akses cepat ke Download, DCIM, Pictures, Data, OBB, dan folder yang kamu sematkan
+- [x] Salin, potong, tempel, hapus (ke tempat sampah), ubah nama, folder baru, properti, cari, urutkan
+- [x] Buka file, bagikan, pasang APK, ekstrak ZIP
+- [x] Akses cepat ke Download, DCIM, Pictures, Data, OBB, dan folder yang kamu sematkan
+- [ ] Buat arsip ZIP
+- [ ] Pratinjau gambar
+- [ ] Pasang XAPK/APKS langsung dari file manager
 
 Backup aplikasi
-- Pilih beberapa aplikasi lalu simpan langsung jadi `.xapk` (manifest, ikon, base + split APK)
-- OBB dan DATA game bisa ikut disertakan
+- [x] Simpan beberapa aplikasi langsung jadi `.xapk` (manifest, ikon, base + split APK)
+- [x] OBB dan DATA game bisa ikut disertakan
 
-Lainnya
-- Tema Terang dan Gelap, tampilan terinspirasi Windows 10
-- Cek pembaruan dari GitHub Release dengan catatan rilis, lalu pasang langsung
-- Mode pasang APK: installer sistem atau Shizuku (senyap)
-- Shizuku Legacy: jalur cadangan lewat Shizuku.Process bila bind service gagal
-- Log dengan timestamp dan warna
-
-## Rencana
-
-Belum janji, ini baru daftar ide:
-- Enkripsi transfer (TLS) supaya aman di jaringan umum
-- Lanjutkan transfer yang terputus
-- Pairing lewat QR agar tidak perlu mengetik PIN
-- Kirim ke beberapa perangkat sekaligus
-- Pasang XAPK/APKS langsung dari file manager
-- Buat arsip ZIP, pratinjau gambar, dan multi-pilih lewat geser
-- Pilihan warna aksen dan bahasa Inggris
+Tampilan dan pengaturan
+- [x] Tema Terang dan Gelap, tampilan terinspirasi Windows 10
+- [x] Warna aksen (7 pilihan)
+- [x] Bahasa Indonesia dan Inggris, otomatis mengikuti bahasa sistem
+- [x] Riwayat perubahan ringkas dalam satu bagian lipat
+- [x] Cek pembaruan dari GitHub Release dengan catatan rilis, lalu pasang langsung
+- [x] Mode pasang APK: installer sistem atau Shizuku (senyap)
+- [x] Shizuku Legacy: jalur cadangan lewat Shizuku.Process bila bind service gagal
+- [x] Log dengan timestamp dan warna
+- [ ] Bahasa lain beraksara Latin (Spanyol, Jerman, dll.)
+- [ ] Bahasa beraksara non-Latin (butuh font tambahan)
+- [ ] Warna aksen bebas (pemilih warna sendiri)
 
 Punya usul? Buka issue di repo.
+
+## Menambah bahasa
+
+Semua terjemahan ada di `app/src/main/cpp/i18n.cpp`. Teks sumbernya bahasa Indonesia; tiap bahasa
+punya satu tabel pasangan `{indonesia, terjemahan}`.
+
+1. Salin tabel `kEn`, ganti namanya (misal `kEs`), lalu terjemahkan kolom kedua. Teks tak ditemukan
+   akan tampil dalam bahasa Indonesia, jadi tabel boleh diisi bertahap.
+2. Daftarkan di `kLangs` dengan kode bahasa dan nama yang tampil, misalnya `{"es", "Espanol", kEs, sizeof(kEs) / sizeof(kEs[0])}`.
+3. Bahasa baru otomatis muncul di Pengaturan > Bahasa dan dipakai bila bahasa sistem cocok.
+
+Pola dengan `*` (misal `Pembaruan *`) menangkap bagian dinamis; di terjemahan ditulis `{1}`, `{2}`, dst.
+Untuk sekarang hanya aksara Latin, karena font bawaan antarmuka belum memuat aksara lain.
 
 ## Persyaratan
 
@@ -150,7 +168,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v2.1 && git push origin v2.1` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v2.2 && git push origin v2.2` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.

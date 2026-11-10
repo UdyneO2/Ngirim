@@ -15,10 +15,11 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_opengl3.h"
+#include "i18n.h"  // harus terakhir: mendefinisikan makro T(...)
 
 namespace {
 
-constexpr const char* kVersion = "v2.1";
+constexpr const char* kVersion = "v2.2";
 
 struct Item { std::string name, sub; long long size = 0; bool sel = false; };
 struct Entry { std::string name; long long size = 0; long long mtime = 0; bool dir = false; bool sel = false; };
@@ -41,6 +42,8 @@ struct State {
     int tabReq = -1;  // paksa pindah tab (indeks), -1 = tidak
     // ---- pengaturan
     bool dark = false, showHidden = false, useTrash = true;
+    int accent = 0;                       // indeks kAccents
+    std::string langPref = "auto", sysLang = "en";
     bool instShizuku = false, autoUpdate = true;   // mode pasang APK, cek update saat dibuka
     std::string updMsg;
     std::string xapkDir, devName;
@@ -125,19 +128,34 @@ struct Pal { ImVec4 ok, warn, err, accent, dim, onAccent, panel, hoverRow; ImU32
 
 ImVec4 rgb(int r, int g, int b, float a = 1.f) { return ImVec4(r / 255.f, g / 255.f, b / 255.f, a); }
 
+struct AccentDef { const char* nama; int r, g, b; };
+const AccentDef kAccents[] = {
+    {"Biru", 0, 120, 215}, {"Hijau", 16, 137, 62}, {"Ungu", 135, 100, 184}, {"Oranye", 202, 80, 16},
+    {"Merah", 232, 17, 35}, {"Teal", 0, 153, 188}, {"Merah muda", 227, 0, 140},
+};
+const int kAccentCount = (int)(sizeof(kAccents) / sizeof(kAccents[0]));
+
+ImVec4 mixc(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(a.x * t + b.x * (1.f - t), a.y * t + b.y * (1.f - t), a.z * t + b.z * (1.f - t), 1.f);
+}
+
 void applyTheme(bool dark) {
     ImVec4* c = ImGui::GetStyle().Colors;
-    const ImVec4 accent = rgb(0, 120, 215);
+    const AccentDef& ad = kAccents[std::max(0, std::min(S.accent, kAccentCount - 1))];
+    const ImVec4 accent = rgb(ad.r, ad.g, ad.b);
     ImVec4 bg, panel, text, dis, border, btn, btnH, btnA, sel, selH, frame, frameH;
     if (!dark) {
         bg = rgb(255, 255, 255); panel = rgb(243, 243, 243); text = rgb(20, 20, 20); dis = rgb(112, 112, 112);
-        border = rgb(173, 173, 173); btn = rgb(225, 225, 225); btnH = rgb(229, 241, 251); btnA = rgb(204, 228, 247);
-        sel = rgb(204, 232, 255); selH = rgb(229, 243, 255); frame = rgb(255, 255, 255); frameH = rgb(229, 241, 251);
+        border = rgb(173, 173, 173); btn = rgb(225, 225, 225);
+        btnH = mixc(accent, rgb(255, 255, 255), 0.10f); btnA = mixc(accent, rgb(255, 255, 255), 0.22f);
+        sel = mixc(accent, rgb(255, 255, 255), 0.20f); selH = mixc(accent, rgb(255, 255, 255), 0.10f);
+        frame = rgb(255, 255, 255); frameH = mixc(accent, rgb(255, 255, 255), 0.10f);
         g_pal.ok = rgb(16, 124, 16); g_pal.warn = rgb(196, 89, 17); g_pal.err = rgb(196, 43, 28);
     } else {
         bg = rgb(31, 31, 31); panel = rgb(43, 43, 43); text = rgb(240, 240, 240); dis = rgb(160, 160, 160);
         border = rgb(95, 95, 95); btn = rgb(51, 51, 51); btnH = rgb(65, 65, 65); btnA = rgb(80, 80, 80);
-        sel = rgb(0, 74, 143); selH = rgb(52, 62, 72); frame = rgb(43, 43, 43); frameH = rgb(65, 65, 65);
+        sel = mixc(accent, rgb(31, 31, 31), 0.55f); selH = mixc(accent, rgb(43, 43, 43), 0.20f);
+        frame = rgb(43, 43, 43); frameH = rgb(65, 65, 65);
         g_pal.ok = rgb(108, 203, 95); g_pal.warn = rgb(252, 185, 90); g_pal.err = rgb(255, 120, 105);
     }
     g_pal.accent = accent; g_pal.dim = dis; g_pal.onAccent = rgb(255, 255, 255); g_pal.panel = panel; g_pal.hoverRow = selH;
@@ -197,6 +215,11 @@ const std::vector<Rilis> kRilis = {
       "Tombol Shizuku Legacy bila bind gagal; coba ulang otomatis dihapus",
       "Nama paket jadi com.udyneos.ngirim (terpasang sebagai aplikasi baru)",
       "FTP: kotak centang lebih kecil, nama panjang kini terbaca"}},
+    {"v2.2", "Warna aksen dan bahasa", "10 Nov 2026",
+     {"Pilihan warna aksen di Pengaturan",
+      "Bahasa Indonesia dan Inggris, otomatis mengikuti bahasa sistem",
+      "Tabel bahasa terpisah, jadi bahasa baru mudah ditambahkan",
+      "Riwayat perubahan di Pengaturan diringkas dalam satu bagian lipat"}},
 };
 
 const std::vector<const char*> kBatasan = {
@@ -264,10 +287,10 @@ void progressBlock(bool busy, long long done, long long total, double speed, con
     if (!(busy || total > 0)) return;
     float pct = total > 0 ? (float)((double)done / (double)total) : 0.f;
     ImGui::ProgressBar(pct, ImVec2(-FLT_MIN, 26.f * d));
-    ImGui::TextWrapped("%s", cur.c_str());
+    ImGui::TextWrapped("%s", i18n::tr(cur).c_str());
     double eta = speed > 1 ? (double)(total - done) / speed : -1;
     ImGui::Text("%s / %s | %s/s | ETA %s", fmtSize((double)done).c_str(), fmtSize((double)total).c_str(),
-                fmtSize(speed).c_str(), busy ? fmtEta(eta).c_str() : "selesai");
+                fmtSize(speed).c_str(), busy ? fmtEta(eta).c_str() : T("selesai"));
 }
 
 // Log gaya terminal (monospace, latar gelap, warna per jenis baris)
@@ -281,7 +304,7 @@ void drawTerminal(const char* id, float h) {
         if (!strncmp(body, "GAGAL", 5) || !strncmp(body, "ERR", 3)) c = ImVec4(1.f, 0.45f, 0.4f, 1.f);
         else if (!strncmp(body, "OK", 2)) c = ImVec4(0.4f, 1.f, 0.5f, 1.f);
         ImGui::PushStyleColor(ImGuiCol_Text, c);
-        ImGui::TextWrapped("%s", l.c_str());
+        ImGui::TextWrapped("%.11s%s", l.c_str(), i18n::tr(body).c_str());
         ImGui::PopStyleColor();
     }
     if (g_mono) ImGui::PopFont();
@@ -472,7 +495,7 @@ int appRow(int idx, Item& it, float rowH) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float is = rowH * 0.6f;
     ImVec2 c(q.x + 4.f * d + is * 0.5f, q.y + rowH * 0.5f);
-    dl->AddCircleFilled(c, is * 0.5f, IM_COL32(0, 120, 215, 255));
+    dl->AddCircleFilled(c, is * 0.5f, ImGui::ColorConvertFloat4ToU32(g_pal.accent));
     char ch[2] = {it.name.empty() ? '?' : (char)toupper((unsigned char)it.name[0]), 0};
     if ((unsigned char)ch[0] >= 0x80) ch[0] = '?';
     ImVec2 ts = ImGui::CalcTextSize(ch);
@@ -527,7 +550,7 @@ void quickAccess(const std::string& prefix, const std::string& curPath, bool all
     if (allowPin) {
         bool isBm = false;
         for (auto& b : S.bookmarks) if (b == curPath) isBm = true;
-        if (wrapButton(isBm ? "Lepas sematan##pin" : "Sematkan folder ini##pin", first)) act("BM|" + curPath);
+        if (wrapButton(isBm ? T("Lepas sematan##pin") : T("Sematkan folder ini##pin"), first)) act("BM|" + curPath);
     }
 }
 
@@ -549,7 +572,7 @@ void breadcrumb() {
         i = j;
     }
     bool first = true;
-    if (wrapButton("Naik##fmup", first)) act("FM|UP");
+    if (wrapButton(T("Naik##fmup"), first)) act("FM|UP");
     for (size_t k = 0; k < segs.size(); k++) {
         std::string l = (k ? "> " : "") + tailEllipsis(segs[k].first, 18) + "##seg" + std::to_string(k);
         if (wrapButton(l, first, k + 1 == segs.size())) act("FM|GO|" + segs[k].second);
@@ -569,63 +592,68 @@ void drawFiles() {
     // ribbon
     bool first = true;
     ImGui::BeginDisabled(nSel == 0 || busy);
-    if (wrapButton("Salin##fm", first)) act("FM|COPY|" + idxSel(S.fm));
-    if (wrapButton("Potong##fm", first)) act("FM|CUT|" + idxSel(S.fm));
+    if (wrapButton(T("Salin##fm"), first)) act("FM|COPY|" + idxSel(S.fm));
+    if (wrapButton(T("Potong##fm"), first)) act("FM|CUT|" + idxSel(S.fm));
     ImGui::EndDisabled();
     ImGui::BeginDisabled(S.clipCount == 0 || busy);
-    std::string pl = S.clipCount ? "Tempel (" + std::to_string(S.clipCount) + (S.clipCut ? ", potong" : "") + ")##fm" : "Tempel##fm";
+    std::string pl;
+    if (S.clipCount) {
+        char b[96];
+        snprintf(b, sizeof b, S.clipCut ? T("Tempel (%d, potong)") : T("Tempel (%d)"), S.clipCount);
+        pl = std::string(b) + "##fm";
+    } else pl = T("Tempel##fm");
     if (wrapButton(pl, first)) act("FM|PASTE");
     ImGui::EndDisabled();
     ImGui::BeginDisabled(nSel == 0 || busy);
-    if (wrapButton("Hapus##fm", first)) act("FM|DEL|" + idxSel(S.fm));
+    if (wrapButton(T("Hapus##fm"), first)) act("FM|DEL|" + idxSel(S.fm));
     ImGui::EndDisabled();
     ImGui::BeginDisabled(nSel != 1 || busy);
-    if (wrapButton("Ubah nama##fm", first)) act("FM|REN|" + idxSel(S.fm));
+    if (wrapButton(T("Ubah nama##fm"), first)) act("FM|REN|" + idxSel(S.fm));
     ImGui::EndDisabled();
     ImGui::BeginDisabled(busy);
-    if (wrapButton("Folder baru##fm", first)) act("FM|NEW");
+    if (wrapButton(T("Folder baru##fm"), first)) act("FM|NEW");
     ImGui::EndDisabled();
     {
         const Entry* one = nullptr; int nFile = 0;
         for (auto& e : S.fm) if (e.sel) { one = &e; if (!e.dir) nFile++; }
         const std::string ex = (nSel == 1 && one) ? lowerExt(one->name) : "";
         ImGui::BeginDisabled(nSel != 1 || !one || one->dir || busy);
-        if (wrapButton("Buka##fm", first)) act("FM|VIEW|" + idxSel(S.fm));
+        if (wrapButton(T("Buka##fm"), first)) act("FM|VIEW|" + idxSel(S.fm));
         ImGui::EndDisabled();
         ImGui::BeginDisabled(nFile == 0 || nFile != nSel || busy);
-        if (wrapButton("Bagikan##fm", first)) act("FM|SHARE|" + idxSel(S.fm));
+        if (wrapButton(T("Bagikan##fm"), first)) act("FM|SHARE|" + idxSel(S.fm));
         ImGui::EndDisabled();
         ImGui::BeginDisabled(ex != "apk" || busy);
-        if (wrapButton("Pasang##fm", first, ex == "apk")) act("FM|INSTALL|" + idxSel(S.fm));
+        if (wrapButton(T("Pasang##fm"), first, ex == "apk")) act("FM|INSTALL|" + idxSel(S.fm));
         ImGui::EndDisabled();
         ImGui::BeginDisabled(ex != "zip" || !S.shizuku || busy);
-        if (wrapButton("Ekstrak##fm", first)) act("FM|UNZIP|" + idxSel(S.fm));
+        if (wrapButton(T("Ekstrak##fm"), first)) act("FM|UNZIP|" + idxSel(S.fm));
         ImGui::EndDisabled();
     }
     ImGui::BeginDisabled(nSel == 0);
-    if (wrapButton("Properti##fm", first)) act("FM|PROP|" + idxSel(S.fm));
-    if (wrapButton("Kirim##fm", first)) act("FM|SEND|" + idxSel(S.fm));
+    if (wrapButton(T("Properti##fm"), first)) act("FM|PROP|" + idxSel(S.fm));
+    if (wrapButton(T("Kirim##fm"), first)) act("FM|SEND|" + idxSel(S.fm));
     ImGui::EndDisabled();
-    if (wrapButton(nSel == (int)S.fm.size() && nSel > 0 ? "Batal##fm" : "Semua##fm", first))
+    if (wrapButton(nSel == (int)S.fm.size() && nSel > 0 ? T("Batal##fm") : T("Semua##fm"), first))
         for (auto& e : S.fm) e.sel = !(nSel == (int)S.fm.size() && nSel > 0);
-    if (wrapButton("Segarkan##fm", first)) act("FM|REF");
+    if (wrapButton(T("Segarkan##fm"), first)) act("FM|REF");
     ImGui::BeginDisabled(!S.shizuku);
     if (wrapButton("Backup APK##fm", first, S.aBusy)) { S.apkOpen = true; act("APK|OPEN"); }
     ImGui::EndDisabled();
 
     // akses cepat
-    ImGui::TextColored(g_pal.dim, "Akses cepat");
+    ImGui::TextColored(g_pal.dim, T("Akses cepat"));
     quickAccess("FM", S.fmPath, true);
 
     // urutkan + cari
-    ImGui::TextColored(g_pal.dim, "Urutkan");
+    ImGui::TextColored(g_pal.dim, T("Urutkan"));
     first = true;
-    const char* sk[] = {"Nama", "Ukuran", "Tanggal", "Jenis"};
+    const char* sk[] = {T("Nama"), T("Ukuran"), T("Tanggal"), T("Jenis")};
     for (int k = 0; k < 4; k++) {
         std::string l = std::string(sk[k]) + (S.fmSort == k ? (S.fmAsc ? " ^" : " v") : "") + "##sort" + std::to_string(k);
         if (wrapButton(l, first, S.fmSort == k)) act("FM|SORT|" + std::to_string(k));
     }
-    if (wrapButton(S.fmFilter.empty() ? "Cari...##fm" : ("Cari: " + tailEllipsis(S.fmFilter, 12) + " (hapus)##fm"), first, !S.fmFilter.empty()))
+    if (wrapButton(S.fmFilter.empty() ? T("Cari...##fm") : ([&] { char b[96]; snprintf(b, sizeof b, T("Cari: %s (hapus)"), tailEllipsis(S.fmFilter, 12).c_str()); return std::string(b) + "##fm"; })(), first, !S.fmFilter.empty()))
         act(S.fmFilter.empty() ? "FM|FIND" : "FM|FINDX");
     endPanel();
     ImGui::PopStyleVar(2);
@@ -636,8 +664,8 @@ void drawFiles() {
     float h = ImGui::GetContentRegionAvail().y - footer;
     if (h < 150.f * d) h = 150.f * d;
     ImGui::BeginChild("fm_list", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
-    if (!S.fmErr.empty()) ImGui::TextColored(g_pal.err, "%s", S.fmErr.c_str());
-    else if (S.fm.empty()) ImGui::TextColored(g_pal.dim, S.fmFilter.empty() ? "Folder ini kosong." : "Tidak ada yang cocok dengan pencarian.");
+    if (!S.fmErr.empty()) ImGui::TextColored(g_pal.err, "%s", i18n::tr(S.fmErr).c_str());
+    else if (S.fm.empty()) ImGui::TextColored(g_pal.dim, S.fmFilter.empty() ? T("Folder ini kosong.") : T("Tidak ada yang cocok dengan pencarian."));
     ImGuiListClipper clip;
     clip.Begin((int)S.fm.size());
     while (clip.Step()) {
@@ -656,11 +684,11 @@ void drawFiles() {
 
     // bilah status
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.dim);
-    ImGui::TextWrapped("%d item | %d dipilih (%s)%s", (int)S.fm.size(), nSel, fmtSize((double)sizeSel(S.fm)).c_str(),
-                       S.clipCount ? (S.clipCut ? " | Clipboard: potong" : " | Clipboard: salin") : "");
+    ImGui::TextWrapped(T("%d item | %d dipilih (%s)%s"), (int)S.fm.size(), nSel, fmtSize((double)sizeSel(S.fm)).c_str(),
+                       S.clipCount ? (S.clipCut ? T(" | Clipboard: potong") : T(" | Clipboard: salin")) : "");
     ImGui::PopStyleColor();
     if (S.mBusy) {
-        if (ImGui::Button("BATALKAN##fm", ImVec2(-FLT_MIN, 44.f * d))) act("CANCEL");
+        if (ImGui::Button(T("BATALKAN##fm"), ImVec2(-FLT_MIN, 44.f * d))) act("CANCEL");
     }
     progressBlock(S.mBusy, S.mDone, S.mTotal, S.mSpeed, S.mCur);
 }
@@ -673,28 +701,28 @@ void drawApk() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.f * d, 6.f * d));
     beginPanel("apk_head");
     bool first = true;
-    if (wrapButton("< Kembali ke file manager##apkback", first)) S.apkOpen = false;
-    ImGui::TextColored(g_pal.accent, "Backup aplikasi");
+    if (wrapButton(T("< Kembali ke file manager##apkback"), first)) S.apkOpen = false;
+    ImGui::TextColored(g_pal.accent, T("Backup aplikasi"));
     ImGui::BeginDisabled(S.aBusy);
-    ImGui::TextColored(g_pal.dim, "Format backup");
+    ImGui::TextColored(g_pal.dim, T("Format backup"));
     first = true;
-    if (wrapButton("XAPK (satu file)##f", first, S.apkFmt == 0)) { S.apkFmt = 0; }
-    if (wrapButton("APK + split (folder)##f", first, S.apkFmt == 1)) { S.apkFmt = 1; }
+    if (wrapButton(T("XAPK (satu file)##f"), first, S.apkFmt == 0)) { S.apkFmt = 0; }
+    if (wrapButton(T("APK + split (folder)##f"), first, S.apkFmt == 1)) { S.apkFmt = 1; }
     ImGui::BeginDisabled(S.apkFmt != 0);
-    if (wrapButton(S.apkObb ? "[x] Sertakan OBB game##obb" : "[ ] Sertakan OBB game##obb", first, S.apkObb)) S.apkObb = !S.apkObb;
-    if (wrapButton(S.apkData ? "[x] Sertakan DATA game##dat" : "[ ] Sertakan DATA game##dat", first, S.apkData)) S.apkData = !S.apkData;
+    if (wrapButton(S.apkObb ? T("[x] Sertakan OBB game##obb") : T("[ ] Sertakan OBB game##obb"), first, S.apkObb)) S.apkObb = !S.apkObb;
+    if (wrapButton(S.apkData ? T("[x] Sertakan DATA game##dat") : T("[ ] Sertakan DATA game##dat"), first, S.apkData)) S.apkData = !S.apkData;
     ImGui::EndDisabled();
-    if (S.apkFmt == 0 && S.apkData) dimWrapped("DATA bisa sangat besar dan bukan bagian standar XAPK; hanya terbaca installer yang mendukungnya.");
-    ImGui::TextColored(g_pal.dim, "Tujuan: %s", tailEllipsis(S.xapkDir, 48).c_str());
+    if (S.apkFmt == 0 && S.apkData) dimWrapped(T("DATA bisa sangat besar dan bukan bagian standar XAPK; hanya terbaca installer yang mendukungnya."));
+    ImGui::TextColored(g_pal.dim, T("Tujuan: %s"), tailEllipsis(S.xapkDir, 48).c_str());
     first = true;
-    if (wrapButton("Cari...##apk", first, !S.apkFilter.empty())) act(S.apkFilter.empty() ? "APK|FIND" : "APK|FINDX");
-    if (wrapButton(S.apkSystem ? "Sembunyikan app sistem##sys" : "Tampilkan app sistem##sys", first)) {
+    if (wrapButton(T("Cari...##apk"), first, !S.apkFilter.empty())) act(S.apkFilter.empty() ? "APK|FIND" : "APK|FINDX");
+    if (wrapButton(S.apkSystem ? T("Sembunyikan app sistem##sys") : T("Tampilkan app sistem##sys"), first)) {
         S.apkSystem = !S.apkSystem;
         act(std::string("APK|SYS|") + (S.apkSystem ? "1" : "0"));
     }
-    if (wrapButton(n == (int)S.apps.size() && n > 0 ? "Batal pilih##apk" : "Pilih semua##apk", first))
+    if (wrapButton(n == (int)S.apps.size() && n > 0 ? T("Batal pilih##apk") : T("Pilih semua##apk"), first))
         for (auto& a : S.apps) a.sel = !(n == (int)S.apps.size() && n > 0);
-    if (wrapButton("Segarkan##apk", first)) act("APK|REF");
+    if (wrapButton(T("Segarkan##apk"), first)) act("APK|REF");
     ImGui::EndDisabled();
     endPanel();
     ImGui::PopStyleVar(2);
@@ -704,7 +732,7 @@ void drawApk() {
     float h = ImGui::GetContentRegionAvail().y - footer;
     if (h < 150.f * d) h = 150.f * d;
     ImGui::BeginChild("apk_list", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
-    if (S.apps.empty()) ImGui::TextColored(g_pal.dim, "Tidak ada aplikasi.");
+    if (S.apps.empty()) ImGui::TextColored(g_pal.dim, T("Tidak ada aplikasi."));
     ImGuiListClipper clip;
     clip.Begin((int)S.apps.size());
     while (clip.Step()) {
@@ -716,10 +744,12 @@ void drawApk() {
     touchScroll();
     ImGui::EndChild();
 
-    ImGui::TextColored(g_pal.dim, "%d aplikasi  |  %d dipilih (%s)", (int)S.apps.size(), n, fmtSize((double)sizeSel(S.apps)).c_str());
+    ImGui::TextColored(g_pal.dim, T("%d aplikasi  |  %d dipilih (%s)"), (int)S.apps.size(), n, fmtSize((double)sizeSel(S.apps)).c_str());
     if (!S.aBusy) {
         ImGui::BeginDisabled(!S.shizuku || n == 0);
-        std::string l = std::string("BACKUP ") + std::to_string(n) + " APLIKASI" + (S.apkFmt == 0 ? " KE XAPK" : "");
+        char lb[96];
+        snprintf(lb, sizeof lb, S.apkFmt == 0 ? T("BACKUP %d APLIKASI KE XAPK") : T("BACKUP %d APLIKASI"), n);
+        std::string l = lb;
         ImGui::PushStyleColor(ImGuiCol_Button, g_pal.accent);
         ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
         bool go = ImGui::Button(l.c_str(), ImVec2(-FLT_MIN, 54.f * d));
@@ -730,7 +760,7 @@ void drawApk() {
         }
         ImGui::EndDisabled();
     } else {
-        if (ImGui::Button("BATALKAN##apk", ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
+        if (ImGui::Button(T("BATALKAN##apk"), ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
     }
     progressBlock(S.aBusy, S.aDone, S.aTotal, S.aSpeed, S.aCur);
 }
@@ -740,22 +770,22 @@ void drawNet() {
     const float d = g_density;
     const ImVec4 ok = g_pal.ok, warn = g_pal.warn, acc = g_pal.accent;
 
-    ImGui::TextColored(S.permOk ? ok : warn, "%s", S.permMsg.c_str());
+    ImGui::TextColored(S.permOk ? ok : warn, "%s", i18n::tr(S.permMsg).c_str());
     if (!S.permOk) {
-        if (ImGui::Button("Berikan izin / periksa ulang", ImVec2(-FLT_MIN, 52.f * d))) act("NET_PERM");
+        if (ImGui::Button(T("Berikan izin / periksa ulang"), ImVec2(-FLT_MIN, 52.f * d))) act("NET_PERM");
     }
-    if (!S.shizuku) ImGui::TextDisabled("Shizuku harus terhubung dulu.");
+    if (!S.shizuku) ImGui::TextDisabled(T("Shizuku harus terhubung dulu."));
     ImGui::BeginDisabled(!(S.permOk && S.shizuku));
 
     // ---- Terima (receiver)
-    ImGui::SeparatorText("Terima");
+    ImGui::SeparatorText(T("Terima"));
     if (toggleSwitch("##rx", S.listening)) act(S.listening ? "RX_OFF" : "RX_ON");
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(S.listening ? ok : g_pal.dim, S.listening ? "Terima AKTIF - terlihat oleh perangkat lain" : "Terima MATI");
-    ImGui::TextWrapped("Folder simpan: %s", S.recvDir.empty() ? "(belum dipilih)" : S.recvDir.c_str());
+    ImGui::TextColored(S.listening ? ok : g_pal.dim, S.listening ? T("Terima AKTIF - terlihat oleh perangkat lain") : T("Terima MATI"));
+    ImGui::TextWrapped(T("Folder simpan: %s"), S.recvDir.empty() ? T("(belum dipilih)") : S.recvDir.c_str());
     ImGui::BeginDisabled(S.listening);
-    if (ImGui::Button("Ubah folder simpan")) act("BPURPOSE|2");
+    if (ImGui::Button(T("Ubah folder simpan"))) act("BPURPOSE|2");
     ImGui::EndDisabled();
     if (toggleSwitch("##bro", S.allowBrowse)) {
         S.allowBrowse = !S.allowBrowse;
@@ -763,9 +793,9 @@ void drawNet() {
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextWrapped("Izinkan jelajah FTP ke /sdcard");
+    ImGui::TextWrapped(T("Izinkan jelajah FTP ke /sdcard"));
     if (S.listening) {
-        ImGui::Text("Alamat: %s", S.addr.c_str());
+        ImGui::Text(T("Alamat: %s"), S.addr.c_str());
         ImGui::Text("PIN:");
         ImGui::SameLine();
         ImGui::SetWindowFontScale(2.2f);
@@ -774,12 +804,12 @@ void drawNet() {
     }
 
     // ---- Perangkat aktif
-    ImGui::SeparatorText("Perangkat aktif");
-    if (ImGui::Button("Segarkan")) act("NET_SCAN");
+    ImGui::SeparatorText(T("Perangkat aktif"));
+    if (ImGui::Button(T("Segarkan"))) act("NET_SCAN");
     ImGui::SameLine();
-    if (ImGui::Button("IP manual")) act("NET_MANUAL");
-    if (S.peers.empty()) ImGui::TextDisabled("Belum ada. Nyalakan Terima di perangkat lain (satu Wi-Fi).");
-    else ImGui::TextDisabled("Ketuk perangkat, lalu masukkan PIN dari layarnya.");
+    if (ImGui::Button(T("IP manual"))) act("NET_MANUAL");
+    if (S.peers.empty()) ImGui::TextDisabled(T("Belum ada. Nyalakan Terima di perangkat lain (satu Wi-Fi)."));
+    else ImGui::TextDisabled(T("Ketuk perangkat, lalu masukkan PIN dari layarnya."));
     for (int i = 0; i < (int)S.peers.size(); i++) {
         ImVec2 q = ImGui::GetCursorScreenPos();
         std::string l = "##p" + std::to_string(i);
@@ -792,34 +822,34 @@ void drawNet() {
 
     // ---- Terhubung
     if (!S.pairedName.empty()) {
-        ImGui::SeparatorText("Terhubung");
+        ImGui::SeparatorText(T("Terhubung"));
         ImGui::TextColored(ok, "%s", S.pairedName.c_str());
         ImGui::SameLine();
         ImGui::BeginDisabled(S.netBusy);
-        if (ImGui::Button("Putus")) act("NET_DISCONNECT");
+        if (ImGui::Button(T("Putus"))) act("NET_DISCONNECT");
         ImGui::EndDisabled();
-        ImGui::TextDisabled("Jelajah dan salin dua arah ada di tab FTP.");
+        ImGui::TextDisabled(T("Jelajah dan salin dua arah ada di tab FTP."));
         ImGui::BeginDisabled(S.netBusy);
         if (ImGui::Button("+ File / folder")) act("BPURPOSE|1");
         ImGui::SameLine();
-        if (ImGui::Button("Kosongkan")) { S.sendList.clear(); act("NET_CLEAR"); }
+        if (ImGui::Button(T("Kosongkan"))) { S.sendList.clear(); act("NET_CLEAR"); }
         ImGui::EndDisabled();
-        if (S.sendList.empty()) ImGui::TextDisabled("Belum ada file/folder dipilih.");
+        if (S.sendList.empty()) ImGui::TextDisabled(T("Belum ada file/folder dipilih."));
         const int kShow = 6;
         for (int i = 0; i < (int)S.sendList.size() && i < kShow; i++) ImGui::TextWrapped("%s", S.sendList[i].name.c_str());
-        if ((int)S.sendList.size() > kShow) ImGui::TextDisabled("... dan %d lainnya", (int)S.sendList.size() - kShow);
+        if ((int)S.sendList.size() > kShow) ImGui::TextDisabled(T("... dan %d lainnya"), (int)S.sendList.size() - kShow);
         if (!S.netBusy) {
             ImGui::BeginDisabled(S.sendList.empty());
             ImGui::PushStyleColor(ImGuiCol_Button, acc);
             ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
-            if (ImGui::Button("KIRIM SEKARANG", ImVec2(-FLT_MIN, 56.f * d))) {
+            if (ImGui::Button(T("KIRIM SEKARANG"), ImVec2(-FLT_MIN, 56.f * d))) {
                 act("NET_SEND");
                 S.netBusy = true; S.netDone = 0; S.netTotal = 0; S.netSpeed = 0; S.netCur = "Menyiapkan...";
             }
             ImGui::PopStyleColor(2);
             ImGui::EndDisabled();
         } else {
-            if (ImGui::Button("BATALKAN", ImVec2(-FLT_MIN, 56.f * d))) act("NET_CANCEL");
+            if (ImGui::Button(T("BATALKAN"), ImVec2(-FLT_MIN, 56.f * d))) act("NET_CANCEL");
         }
     }
     ImGui::EndDisabled();
@@ -827,10 +857,10 @@ void drawNet() {
     progressBlock(S.netBusy, S.netDone, S.netTotal, S.netSpeed, S.netCur);
 
     // log terakhir (selengkapnya di tab Log)
-    ImGui::SeparatorText("Log terakhir");
+    ImGui::SeparatorText(T("Log terakhir"));
     if (g_mono) ImGui::PushFont(g_mono);
     size_t from = S.logs.size() > 5 ? S.logs.size() - 5 : 0;
-    for (size_t i = from; i < S.logs.size(); i++) ImGui::TextWrapped("%s", S.logs[i].c_str());
+    for (size_t i = from; i < S.logs.size(); i++) ImGui::TextWrapped("%.11s%s", S.logs[i].c_str(), i18n::tr(S.logs[i].size() > 11 ? S.logs[i].c_str() + 11 : "").c_str());
     if (g_mono) ImGui::PopFont();
 }
 
@@ -848,23 +878,23 @@ void drawPane(int i, float w, float h) {
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseClicked(0)) S.active = i;
 
     if (i == 0) {
-        ImGui::TextColored(g_pal.accent, "HP ini");
+        ImGui::TextColored(g_pal.accent, T("HP ini"));
     } else {
         bool first = true;
-        if (wrapButton("HP ini##src0", first, !P.remote)) act("FP|1|SRC|0");
+        if (wrapButton(T("HP ini##src0"), first, !P.remote)) act("FP|1|SRC|0");
         ImGui::BeginDisabled(S.pairedName.empty());
-        std::string rl = S.pairedName.empty() ? "Perangkat lain" : tailEllipsis(S.pairedName, 14);
+        std::string rl = S.pairedName.empty() ? T("Perangkat lain") : tailEllipsis(S.pairedName, 14);
         if (wrapButton(rl + "##src1", first, P.remote)) act("FP|1|SRC|1");
         ImGui::EndDisabled();
     }
     ImGui::TextColored(g_pal.dim, "%s", tailEllipsis(P.path, 30).c_str());
-    if (i == 1 && S.pairedName.empty() && !P.remote) ImGui::TextColored(g_pal.dim, "Pairing dulu di tab Wi-Fi.");
+    if (i == 1 && S.pairedName.empty() && !P.remote) ImGui::TextColored(g_pal.dim, T("Pairing dulu di tab Wi-Fi."));
     if (!P.err.empty()) ImGui::TextColored(g_pal.err, "%s", P.err.c_str());
 
     float lh = ImGui::GetContentRegionAvail().y - 4.f * d;
     if (lh < 60.f * d) lh = 60.f * d;
     ImGui::BeginChild((id + "_list").c_str(), ImVec2(0, lh), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-    if (P.e.empty() && P.err.empty()) ImGui::TextColored(g_pal.dim, "Kosong");
+    if (P.e.empty() && P.err.empty()) ImGui::TextColored(g_pal.dim, T("Kosong"));
     ImGuiListClipper clip;
     clip.Begin((int)P.e.size());
     while (clip.Step()) {
@@ -891,17 +921,17 @@ void drawFtp() {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f * d, 4.f * d));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.f * d, 6.f * d));
     beginPanel("ftp_head");
-    ImGui::TextColored(g_pal.accent, "Panel aktif: %s", S.active == 0 ? "kiri" : "kanan");
+    ImGui::TextColored(g_pal.accent, T("Panel aktif: %s"), S.active == 0 ? T("kiri") : T("kanan"));
     quickAccess("FP|" + ai, A.path, false);
     bool isBm = false;
     for (auto& b : S.bookmarks) if (b == A.path) isBm = true;
     bool first = true;
-    if (wrapButton("Naik", first)) act("FP|" + ai + "|UP");
-    if (wrapButton("Segarkan", first)) act("FP|" + ai + "|REF");
+    if (wrapButton(T("Naik"), first)) act("FP|" + ai + "|UP");
+    if (wrapButton(T("Segarkan"), first)) act("FP|" + ai + "|REF");
     ImGui::BeginDisabled(A.remote);
-    if (wrapButton("Folder baru", first)) act("FP_MKDIR|" + ai);
+    if (wrapButton(T("Folder baru"), first)) act("FP_MKDIR|" + ai);
     ImGui::EndDisabled();
-    if (wrapButton(isBm ? "Lepas sematan" : "Sematkan folder", first)) act("BM|" + A.path);
+    if (wrapButton(isBm ? T("Lepas sematan") : T("Sematkan folder"), first)) act("BM|" + A.path);
     endPanel();
     ImGui::PopStyleVar(2);
 
@@ -919,32 +949,32 @@ void drawFtp() {
 
     const int nL = countSel(S.pane[0].e), nR = countSel(S.pane[1].e);
     ImGui::BeginDisabled(S.fBusy);
-    ImGui::RadioButton("Salin", &S.fMove, 0);
+    ImGui::RadioButton(T("Salin"), &S.fMove, 0);
     ImGui::SameLine();
     ImGui::BeginDisabled(remote);
-    ImGui::RadioButton("Pindah", &S.fMove, 1);
+    ImGui::RadioButton(T("Pindah"), &S.fMove, 1);
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextColored(g_pal.dim, "Dipilih: kiri %d, kanan %d", nL, nR);
+    ImGui::TextColored(g_pal.dim, T("Dipilih: kiri %d, kanan %d"), nL, nR);
     ImGui::EndDisabled();
 
     if (!S.fBusy) {
         const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
         ImGui::BeginDisabled(!S.shizuku || nL == 0);
-        if (ImGui::Button("Kiri  >>  Kanan", ImVec2(bw, 50.f * d))) {
+        if (ImGui::Button(T("Kiri  >>  Kanan"), ImVec2(bw, 50.f * d))) {
             act("FP_XFER|0|" + std::to_string(S.fMove) + "|" + idxSel(S.pane[0].e));
             S.fBusy = true; S.fDone = 0; S.fTotal = 0; S.fSpeed = 0; S.fCur = "Menyiapkan...";
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!S.shizuku || nR == 0);
-        if (ImGui::Button("Kiri  <<  Kanan", ImVec2(-FLT_MIN, 50.f * d))) {
+        if (ImGui::Button(T("Kiri  <<  Kanan"), ImVec2(-FLT_MIN, 50.f * d))) {
             act("FP_XFER|1|" + std::to_string(S.fMove) + "|" + idxSel(S.pane[1].e));
             S.fBusy = true; S.fDone = 0; S.fTotal = 0; S.fSpeed = 0; S.fCur = "Menyiapkan...";
         }
         ImGui::EndDisabled();
     } else {
-        if (ImGui::Button("BATALKAN##ftp", ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
+        if (ImGui::Button(T("BATALKAN##ftp"), ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
     }
     progressBlock(S.fBusy, S.fDone, S.fTotal, S.fSpeed, S.fCur);
 }
@@ -969,101 +999,123 @@ void settingToggle(const char* id, const char* label, const char* sub, bool on, 
 void drawSettings() {
     const float d = g_density;
 
-    ImGui::SeparatorText("Tampilan");
+    ImGui::SeparatorText(T("Tampilan"));
     {
         bool first = true;
-        if (wrapButton("Terang##th", first, !S.dark)) { S.dark = false; applyTheme(false); act("SET|theme|0"); }
-        if (wrapButton("Gelap##th", first, S.dark)) { S.dark = true; applyTheme(true); act("SET|theme|1"); }
+        if (wrapButton(T("Terang##th"), first, !S.dark)) { S.dark = false; applyTheme(false); act("SET|theme|0"); }
+        if (wrapButton(T("Gelap##th"), first, S.dark)) { S.dark = true; applyTheme(true); act("SET|theme|1"); }
+    }
+    ImGui::Spacing();
+    ImGui::TextColored(g_pal.dim, "%s", T("Warna aksen"));
+    {
+        const float sw = 40.f * d, gap = 10.f * d;
+        for (int i = 0; i < kAccentCount; i++) {
+            if (i > 0 && ImGui::GetContentRegionAvail().x >= sw + gap) ImGui::SameLine(0, gap);
+            ImGui::PushID(i);
+            const bool hit = ImGui::InvisibleButton("##acc", ImVec2(sw, sw));
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+            const ImVec2 c((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+            dl->AddCircleFilled(c, sw * 0.40f, IM_COL32(kAccents[i].r, kAccents[i].g, kAccents[i].b, 255));
+            if (S.accent == i) {
+                dl->AddCircle(c, sw * 0.48f, g_pal.text, 0, 2.5f * d);
+                const float u = sw * 0.14f;
+                dl->AddLine(ImVec2(c.x - u * 1.2f, c.y), ImVec2(c.x - u * 0.3f, c.y + u), IM_COL32(255, 255, 255, 255), 2.5f * d);
+                dl->AddLine(ImVec2(c.x - u * 0.3f, c.y + u), ImVec2(c.x + u * 1.3f, c.y - u), IM_COL32(255, 255, 255, 255), 2.5f * d);
+            }
+            ImGui::PopID();
+            if (hit) { S.accent = i; applyTheme(S.dark); act("ACCENT|" + std::to_string(i)); }
+        }
+        char ab[96];
+        snprintf(ab, sizeof ab, T("Aktif: %s"), T(kAccents[S.accent].nama));
+        dimWrapped(ab);
+    }
+
+    ImGui::SeparatorText(T("Bahasa"));
+    {
+        bool first = true;
+        if (wrapButton(std::string(T("Otomatis")) + "##lg", first, S.langPref == "auto")) { S.langPref = "auto"; i18n::setLanguage("auto", S.sysLang); act("LANG|auto"); }
+        int n = 0;
+        const i18n::LangInfo* L = i18n::languages(n);
+        for (int i = 0; i < n; i++) {
+            const std::string code = L[i].code;
+            if (wrapButton(std::string(L[i].name) + "##lg" + code, first, S.langPref == code)) { S.langPref = code; i18n::setLanguage(code, S.sysLang); act("LANG|" + code); }
+        }
+        if (S.langPref == "auto") dimWrapped(T("Otomatis: ikuti bahasa sistem, selain Indonesia memakai Inggris."));
     }
 
     ImGui::SeparatorText("File manager");
-    settingToggle("##hid", "Tampilkan file tersembunyi", "Nama berawalan titik (.)", S.showHidden, "hidden");
+    settingToggle("##hid", T("Tampilkan file tersembunyi"), T("Nama berawalan titik (.)"), S.showHidden, "hidden");
     ImGui::Spacing();
-    settingToggle("##trash", "Gunakan tempat sampah", "Hapus memindahkan ke /sdcard/Ngirim/.Sampah (Android/data dan OBB dihapus permanen)", S.useTrash, "trash");
-    if (ImGui::Button("Buka tempat sampah")) act("TRASH_OPEN");
+    settingToggle("##trash", T("Gunakan tempat sampah"), T("Hapus memindahkan ke /sdcard/Ngirim/.Sampah (Android/data dan OBB dihapus permanen)"), S.useTrash, "trash");
+    if (ImGui::Button(T("Buka tempat sampah"))) act("TRASH_OPEN");
     ImGui::SameLine();
-    if (ImGui::Button("Kosongkan sampah")) act("TRASH_EMPTY");
+    if (ImGui::Button(T("Kosongkan sampah"))) act("TRASH_EMPTY");
 
-    ImGui::SeparatorText("Pasang APK");
+    ImGui::SeparatorText(T("Pasang APK"));
     {
         bool first = true;
-        if (wrapButton("Installer sistem##inst", first, !S.instShizuku)) { S.instShizuku = false; act("SET|inst|0"); }
-        if (wrapButton("Shizuku (senyap)##inst", first, S.instShizuku)) { S.instShizuku = true; act("SET|inst|1"); }
-        dimWrapped(S.instShizuku ? "Dipasang tanpa dialog lewat Shizuku (perlu Shizuku terhubung)."
-                                 : "Memakai installer Android; perlu izin 'pasang aplikasi tak dikenal'.");
+        if (wrapButton(T("Installer sistem##inst"), first, !S.instShizuku)) { S.instShizuku = false; act("SET|inst|0"); }
+        if (wrapButton(T("Shizuku (senyap)##inst"), first, S.instShizuku)) { S.instShizuku = true; act("SET|inst|1"); }
+        dimWrapped(S.instShizuku ? T("Dipasang tanpa dialog lewat Shizuku (perlu Shizuku terhubung).")
+                                 : T("Memakai installer Android; perlu izin 'pasang aplikasi tak dikenal'."));
     }
 
-    ImGui::SeparatorText("Pembaruan");
-    ImGui::Text("Versi terpasang: %s", kVersion);
-    settingToggle("##autoupd", "Cek pembaruan saat dibuka", "Mengambil rilis terbaru dari GitHub", S.autoUpdate, "autoupd");
-    if (ImGui::Button("Cek pembaruan")) act("UPD_CHECK");
-    if (!S.updMsg.empty()) dimWrapped(S.updMsg.c_str());
-    dimWrapped("Pembaruan dipasang lewat Shizuku bila terhubung, kalau tidak lewat installer sistem.");
+    ImGui::SeparatorText(T("Pembaruan"));
+    ImGui::Text(T("Versi terpasang: %s"), kVersion);
+    settingToggle("##autoupd", T("Cek pembaruan saat dibuka"), T("Mengambil rilis terbaru dari GitHub"), S.autoUpdate, "autoupd");
+    if (ImGui::Button(T("Cek pembaruan"))) act("UPD_CHECK");
+    if (!S.updMsg.empty()) dimWrapped(i18n::tr(S.updMsg).c_str());
+    dimWrapped(T("Pembaruan dipasang lewat Shizuku bila terhubung, kalau tidak lewat installer sistem."));
 
     ImGui::SeparatorText("Backup APK");
-    ImGui::TextWrapped("Folder hasil: %s", S.xapkDir.c_str());
-    if (ImGui::Button("Ubah folder hasil")) act("BPURPOSE|5");
+    ImGui::TextWrapped(T("Folder hasil: %s"), S.xapkDir.c_str());
+    if (ImGui::Button(T("Ubah folder hasil"))) act("BPURPOSE|5");
 
-    ImGui::SeparatorText("Jaringan");
-    ImGui::TextWrapped("Nama perangkat: %s", S.devName.c_str());
-    if (ImGui::Button("Ubah nama perangkat")) act("SET_NAME");
-    dimWrapped("Nama baru dipakai saat Terima dinyalakan ulang.");
+    ImGui::SeparatorText(T("Jaringan"));
+    ImGui::TextWrapped(T("Nama perangkat: %s"), S.devName.c_str());
+    if (ImGui::Button(T("Ubah nama perangkat"))) act("SET_NAME");
+    dimWrapped(T("Nama baru dipakai saat Terima dinyalakan ulang."));
 
     ImGui::SeparatorText("Shizuku");
-    ImGui::TextColored(S.shizuku ? g_pal.ok : g_pal.err, "%s", S.shizukuMsg.c_str());
+    ImGui::TextColored(S.shizuku ? g_pal.ok : g_pal.err, "%s", i18n::tr(S.shizukuMsg).c_str());
     {
         bool first = true;
         if (S.shizukuFailed && wrapButton("Shizuku Legacy", first, true)) act("LEGACY");
-        if (wrapButton("Hubungkan Shizuku", first)) act("CONNECT");
-        if (wrapButton("Buka app Shizuku", first)) act("OPEN_SHIZUKU");
-        if (S.shizukuFailed) dimWrapped("Legacy: tanpa UserService, perintah dijalankan lewat Shizuku.Process.");
+        if (wrapButton(T("Hubungkan Shizuku"), first)) act("CONNECT");
+        if (wrapButton(T("Buka app Shizuku"), first)) act("OPEN_SHIZUKU");
+        if (S.shizukuFailed) dimWrapped(T("Legacy: tanpa UserService, perintah dijalankan lewat Shizuku.Process."));
     }
 
-    ImGui::SeparatorText("Tentang");
+    ImGui::SeparatorText(T("Tentang"));
     ImGui::SetWindowFontScale(1.3f);
-    ImGui::TextColored(g_pal.accent, "Ngirim: Berbagi aplikasi dengan mudah");
+    ImGui::TextColored(g_pal.accent, T("Ngirim: Berbagi aplikasi dengan mudah"));
     ImGui::SetWindowFontScale(1.f);
     ImGui::TextWrapped("Sender, FTP & File manager");
-    dimWrapped("Kirim lewat Wi-Fi, kelola dua folder sekaligus, dan backup aplikasi ke XAPK, semuanya dalam satu app.");
+    dimWrapped(T("Kirim lewat Wi-Fi, kelola dua folder sekaligus, dan backup aplikasi ke XAPK, semuanya dalam satu app."));
     ImGui::Spacing();
-    ImGui::Text("Versi %s", kVersion);
-    dimWrapped("Dibuat oleh UdyneO2. Dibangun dengan Dear ImGui, Shizuku API, dan Kotlin.");
+    ImGui::Text(T("Versi %s"), kVersion);
+    dimWrapped(T("Dibuat oleh UdyneO2. Dibangun dengan Dear ImGui, Shizuku API, dan Kotlin."));
     dimWrapped("github.com/UdyneO2/Ngirim");
 
-    ImGui::SeparatorText("Riwayat perubahan");
+    ImGui::Spacing();
     {
-        static int cmd = 0;   // 1 = buka semua, 2 = tutup semua
-        bool first = true;
-        if (wrapButton("Buka semua##rl", first)) cmd = 1;
-        if (wrapButton("Tutup semua##rl", first)) cmd = 2;
-        ImGui::Spacing();
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f * d, 10.f * d));
-        const size_t n = kRilis.size();
-        for (size_t i = 0; i < n; i++) {
-            const Rilis& r = kRilis[i];
-            char head[200];
-            snprintf(head, sizeof head, "%s  -  %s###rl%zu", r.ver, r.judul, i);
-            if (cmd) ImGui::SetNextItemOpen(cmd == 1, ImGuiCond_Always);
-            else if (i == n - 1) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-            const bool open = ImGui::CollapsingHeader(head);
-            if (open) {
-                ImGui::PopStyleVar();
-                ImGui::Indent(8.f * d);
-                ImGui::TextColored(g_pal.accent, "%s", r.info);
-                for (const char* it : r.butir) ImGui::TextWrapped("+ %s", it);
-                ImGui::Unindent(8.f * d);
-                ImGui::Spacing();
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f * d, 10.f * d));
-            }
-        }
-        if (cmd) ImGui::SetNextItemOpen(cmd == 1, ImGuiCond_Always);
-        if (ImGui::CollapsingHeader("Batasan yang diketahui###rlbat")) {
-            ImGui::PopStyleVar();
-            for (const char* it : kBatasan) ImGui::TextWrapped("- %s", it);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f * d, 10.f * d));
-        }
+        const bool open = ImGui::CollapsingHeader(
+            (std::string(T("Riwayat perubahan")) + "  (v1.0 - " + kRilis.back().ver + ")###rl").c_str());
         ImGui::PopStyleVar();
-        cmd = 0;
+        if (open) {
+            ImGui::SetWindowFontScale(0.92f);
+            for (const Rilis& r : kRilis) {
+                ImGui::TextColored(g_pal.accent, "%s  -  %s", r.ver, T(r.judul));
+                ImGui::TextColored(g_pal.dim, "%s", T(r.info));
+                for (const char* it : r.butir) ImGui::TextWrapped("+ %s", T(it));
+                ImGui::Spacing();
+            }
+            ImGui::TextColored(g_pal.warn, "%s", T("Batasan yang diketahui"));
+            for (const char* it : kBatasan) ImGui::TextWrapped("- %s", T(it));
+            ImGui::SetWindowFontScale(1.f);
+        }
     }
     ImGui::Dummy(ImVec2(0, 24.f * d));
 }
@@ -1072,16 +1124,16 @@ void drawSettings() {
 void drawBrowser() {
     const float d = g_density;
     const int P = S.bPurpose;
-    const char* title = P == 1 ? "Pilih file / folder untuk dikirim"
-                      : P == 2 ? "Pilih folder penyimpanan terima"
-                      : "Pilih folder hasil backup XAPK";
+    const char* title = P == 1 ? T("Pilih file / folder untuk dikirim")
+                      : P == 2 ? T("Pilih folder penyimpanan terima")
+                      : T("Pilih folder hasil backup XAPK");
     ImGui::TextColored(g_pal.accent, "%s", title);
     ImGui::TextWrapped("%s", S.bPath.c_str());
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f * d, 4.f * d));
     bool first = true;
-    if (wrapButton("Naik", first)) act("BUP");
-    if (wrapButton("Folder baru", first)) act("BNEWDIR");
-    if (wrapButton("Tutup", first)) act("BCLOSE");
+    if (wrapButton(T("Naik"), first)) act("BUP");
+    if (wrapButton(T("Folder baru"), first)) act("BNEWDIR");
+    if (wrapButton(T("Tutup"), first)) act("BCLOSE");
     if (wrapButton("Internal", first)) act("BGO|/sdcard");
     if (wrapButton("Download", first)) act("BGO|/sdcard/Download");
     if (wrapButton("Data", first)) act("BGO|/sdcard/Android/data");
@@ -1092,7 +1144,7 @@ void drawBrowser() {
     float h = ImGui::GetContentRegionAvail().y - 75.f * d;
     if (h < 100.f * d) h = 100.f * d;
     ImGui::BeginChild("blist", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
-    if (S.bEntries.empty()) ImGui::TextColored(g_pal.dim, "Folder kosong / tidak bisa dibaca.");
+    if (S.bEntries.empty()) ImGui::TextColored(g_pal.dim, T("Folder kosong / tidak bisa dibaca."));
     ImGuiListClipper clip;
     clip.Begin((int)S.bEntries.size());
     while (clip.Step()) {
@@ -1110,12 +1162,14 @@ void drawBrowser() {
     ImGui::EndChild();
 
     if (P == 1) {
-        std::string l = "Tambahkan " + std::to_string(n) + " item";
+        char lb[64];
+        snprintf(lb, sizeof lb, T("Tambahkan %d item"), n);
+        std::string l = lb;
         ImGui::BeginDisabled(n == 0);
         if (ImGui::Button(l.c_str(), ImVec2(-FLT_MIN, 56.f * d))) act("BFILES|" + idxSel(S.bEntries));
         ImGui::EndDisabled();
     } else {
-        if (ImGui::Button("PILIH FOLDER INI", ImVec2(-FLT_MIN, 56.f * d))) act("BDIR");
+        if (ImGui::Button(T("PILIH FOLDER INI"), ImVec2(-FLT_MIN, 56.f * d))) act("BDIR");
     }
 }
 
@@ -1141,7 +1195,7 @@ void drawUI() {
         const ImU32 white = IM_COL32(255, 255, 255, 255);
         dl->AddText(ImVec2(10.f * d, (barH - th) * 0.5f), white, "Ngirim");
         dl->AddText(ImVec2(10.f * d + ImGui::CalcTextSize("Ngirim ").x, (barH - th) * 0.5f), IM_COL32(255, 255, 255, 190), kVersion);
-        const char* st = S.shizuku ? "Shizuku" : "Shizuku terputus";
+        const char* st = S.shizuku ? "Shizuku" : T("Shizuku terputus");
         ImVec2 ts = ImGui::CalcTextSize(st);
         float x = io.DisplaySize.x - ts.x - 14.f * d;
         dl->AddText(ImVec2(x, (barH - th) * 0.5f), white, st);
@@ -1151,12 +1205,12 @@ void drawUI() {
 
     if (!S.shizuku) {
         ImGui::PushStyleColor(ImGuiCol_Text, g_pal.err);
-        ImGui::TextWrapped("%s", S.shizukuMsg.c_str());
+        ImGui::TextWrapped("%s", i18n::tr(S.shizukuMsg).c_str());
         ImGui::PopStyleColor();
         bool first = true;
         if (S.shizukuFailed && wrapButton("Shizuku Legacy##top", first, true)) act("LEGACY");
-        if (wrapButton("Hubungkan Shizuku##top", first)) act("CONNECT");
-        if (wrapButton("Buka app Shizuku##top", first)) act("OPEN_SHIZUKU");
+        if (wrapButton(T("Hubungkan Shizuku##top"), first)) act("CONNECT");
+        if (wrapButton(T("Buka app Shizuku##top"), first)) act("OPEN_SHIZUKU");
     }
 
     if (S.tabReq >= 0) S.apkOpen = false;
@@ -1166,7 +1220,7 @@ void drawUI() {
         drawApk();
     } else if (ImGui::BeginTabBar("tabs")) {
         auto flag = [&](int idx) { return S.tabReq == idx ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None; };
-        if (ImGui::BeginTabItem("Lokal", nullptr, flag(0))) { drawFiles(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem(T("Lokal"), nullptr, flag(0))) { drawFiles(); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Wi-Fi", nullptr, flag(1))) {
             ImGui::BeginChild("t_net", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
             drawNet();
@@ -1175,7 +1229,7 @@ void drawUI() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("FTP", nullptr, flag(2))) { drawFtp(); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Pengaturan", nullptr, flag(3))) {
+        if (ImGui::BeginTabItem(T("Pengaturan"), nullptr, flag(3))) {
             ImGui::BeginChild("t_set", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
             drawSettings();
             touchScroll();
@@ -1183,7 +1237,7 @@ void drawUI() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Log", nullptr, flag(4))) {
-            if (ImGui::Button("Bersihkan log")) { S.logs.clear(); }
+            if (ImGui::Button(T("Bersihkan log"))) { S.logs.clear(); }
             drawTerminal("term_main", ImGui::GetContentRegionAvail().y);
             ImGui::EndTabItem();
         }
@@ -1358,12 +1412,20 @@ JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_selectTab(JNIEnv*, jclass,
 
 JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setSettings(JNIEnv* e, jclass, jboolean dark, jboolean hidden,
                                                               jboolean trash, jstring xapkDir, jstring devName,
-                                                              jboolean instShizuku, jboolean autoUpdate) {
-    std::string x = js(e, xapkDir), n = js(e, devName);
+                                                              jboolean instShizuku, jboolean autoUpdate,
+                                                              jint accent, jstring lang, jstring sysLang) {
+    std::string x = js(e, xapkDir), n = js(e, devName), lg = js(e, lang), sl = js(e, sysLang);
     std::lock_guard<std::mutex> lk(S.mu);
     if (S.dark != (bool)dark) g_themeDirty = true;
     S.dark = dark; S.showHidden = hidden; S.useTrash = trash; S.xapkDir = x; S.devName = n;
     S.instShizuku = instShizuku; S.autoUpdate = autoUpdate;
+    if (S.accent != (int)accent) { S.accent = (int)accent; g_themeDirty = true; }
+    S.langPref = lg; S.sysLang = sl;
+    i18n::setLanguage(lg, sl);
+}
+
+JNIEXPORT jstring JNICALL Java_com_udyneos_ngirim_Native_tr(JNIEnv* e, jclass, jstring s) {
+    return e->NewStringUTF(i18n::tr(js(e, s)).c_str());
 }
 
 JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setUpdateMsg(JNIEnv* e, jclass, jstring msg) {
