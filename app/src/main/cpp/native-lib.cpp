@@ -22,7 +22,7 @@
 
 namespace {
 
-constexpr const char* kVersion = "v2.4";
+constexpr const char* kVersion = "v2.5";
 
 std::string urlEncode(const std::string& in) {
     static const char* hex = "0123456789ABCDEF";
@@ -239,6 +239,10 @@ const std::vector<Rilis> kRilis = {
     {"v2.4", "Pemindai QR dan ikon baru", "11 Nov 2026",
      {"Tombol Pindai QR di tab Wi-Fi: kamera langsung di dalam Ngirim",
       "Ikon aplikasi baru"}},
+    {"v2.5", "Lanjutkan transfer", "11 Nov 2026",
+     {"Transfer yang putus dilanjutkan dari byte terakhir, bukan mulai dari nol",
+      "Otomatis mencoba menyambung lagi sampai 4 kali saat koneksi terputus",
+      "Berlaku untuk kirim, terima, dan FTP dua panel"}},
 };
 
 const std::vector<const char*> kBatasan = {

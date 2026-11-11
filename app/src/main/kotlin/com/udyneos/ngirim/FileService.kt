@@ -38,7 +38,7 @@ class FileService : IFileService.Stub() {
 
     companion object {
         private const val MAGIC = 0x4E475231 // "NGR1"
-        private const val VERSION = 2
+        private const val VERSION = 3   // 3: manifest membawa waktu ubah + penerima mengirim offset lanjutan
         private const val MAX_PIN_FAILS = 5
     }
 
@@ -139,6 +139,7 @@ class FileService : IFileService.Stub() {
             val ss = ServerSocket(0)
             server = ss
             pinFails.set(0)
+            try { cleanStaleParts(root) } catch (_: Throwable) {}
             Thread { acceptLoop(ss, root, pin, deviceName, cb) }.start()
             ss.localPort
         } catch (t: Throwable) {
@@ -173,7 +174,24 @@ class FileService : IFileService.Stub() {
         log(cb, "Server terima berhenti")
     }
 
-    private class Ent(val rel: String, val dir: Boolean, val size: Long)
+    private class Ent(val rel: String, val dir: Boolean, val size: Long, val mtime: Long)
+
+    /** Penolakan dari lawan bicara (bukan gangguan jaringan). */
+    private class Rejected(msg: String) : IOException(msg)
+
+    /** File sementara penerima: nama + ukuran + waktu ubah sumber, jadi hanya cocok dengan file yang sama persis. */
+    private fun partFile(target: File, size: Long, mtime: Long) =
+        File(target.parentFile, "${target.name}.$size-$mtime.ngpart")
+
+    /** Hapus sisa transfer yang tak pernah dilanjutkan (> 7 hari). */
+    private fun cleanStaleParts(dir: File, depth: Int = 0) {
+        if (depth > 8) return
+        val cutoff = System.currentTimeMillis() - 7L * 24 * 3600 * 1000
+        dir.listFiles()?.forEach {
+            if (it.isDirectory) cleanStaleParts(it, depth + 1)
+            else if (it.name.endsWith(".ngpart") && it.lastModified() < cutoff) it.delete()
+        }
+    }
     private class Hello(val mode: Int, val peer: String, val mac: ByteArray)
     private class Outcome(val ok: Boolean, val msg: String, val done: Long, val total: Long)
 
@@ -293,7 +311,7 @@ class FileService : IFileService.Stub() {
         val total = inp.readLong()
         if (count < 0 || count > 2_000_000 || total < 0) throw IOException("Manifest tidak valid")
         val list = ArrayList<Ent>(count)
-        repeat(count) { list.add(Ent(inp.readUTF(), inp.readByte().toInt() == 1, inp.readLong())) }
+        repeat(count) { list.add(Ent(inp.readUTF(), inp.readByte().toInt() == 1, inp.readLong(), inp.readLong())) }
 
         val targets = try {
             list.map { safeResolve(root, it.rel) }
@@ -301,23 +319,39 @@ class FileService : IFileService.Stub() {
             reply(out, false, "Path ditolak")
             return Outcome(false, "Path ditolak: ${e.message}", 0, total)
         }
-        if (root.usableSpace < total) {
+        // sisa transfer sebelumnya: berapa byte tiap file sudah ada
+        val offsets = LongArray(list.size)
+        for ((i, e) in list.withIndex()) {
+            if (e.dir) continue
+            val p = partFile(targets[i], e.size, e.mtime)
+            if (p.isFile) {
+                val len = p.length()
+                if (len in 1..e.size) offsets[i] = len else p.delete()
+            }
+        }
+        val resumed = offsets.sum()
+        if (root.usableSpace < total - resumed) {
             reply(out, false, "Ruang penyimpanan tidak cukup")
-            return Outcome(false, "Ruang tidak cukup (butuh ${fmt(total)})", 0, total)
+            return Outcome(false, "Ruang tidak cukup (butuh ${fmt(total - resumed)})", 0, total)
         }
         reply(out, true, "SIAP")
+        for (o in offsets) out.writeLong(o)
+        out.flush()
         log(cb, "Menerima ${list.size} entri (${fmt(total)})")
+        if (resumed > 0) log(cb, "Melanjutkan: ${fmt(resumed)} sudah ada")
 
         val job = Job(cb, total)
+        job.skip(resumed)
         var files = 0
         for ((i, e) in list.withIndex()) {
             val target = targets[i]
             if (e.dir) { target.mkdirs(); continue }
             target.parentFile?.mkdirs()
-            val dst = uniqueFile(target)
-            try {
-                FileOutputStream(dst).use { o ->
-                    var left = e.size
+            val part = partFile(target, e.size, e.mtime)
+            // Gangguan di tengah jalan meninggalkan file .ngpart supaya bisa dilanjutkan; dihapus otomatis setelah 7 hari
+            run {
+                FileOutputStream(part, offsets[i] > 0).use { o ->
+                    var left = e.size - offsets[i]
                     while (left > 0) {
                         val n = inp.read(job.buf, 0, minOf(left, job.buf.size.toLong()).toInt())
                         if (n < 0) throw EOFException("Koneksi terputus")
@@ -328,10 +362,10 @@ class FileService : IFileService.Stub() {
                         if (cancelled) throw InterruptedException("cancel")
                     }
                 }
-            } catch (ex: Throwable) {
-                dst.delete()
-                throw ex
             }
+            val dst = uniqueFile(target)
+            if (!part.renameTo(dst)) throw IOException("Gagal menyimpan ${e.rel}")
+            if (e.mtime > 0) dst.setLastModified(e.mtime)
             files++
             log(cb, "OK     ${e.rel}")
         }
@@ -340,16 +374,16 @@ class FileService : IFileService.Stub() {
         return Outcome(true, "Selesai: $files file diterima dari $label (${fmt(job.done)})", job.done, total)
     }
 
-    private class SendEnt(val rel: String, val f: File, val dir: Boolean, val size: Long)
+    private class SendEnt(val rel: String, val f: File, val dir: Boolean, val size: Long, val mtime: Long)
 
     private fun buildManifest(srcs: List<File>): List<SendEnt> {
         val list = ArrayList<SendEnt>()
         fun walk(rel: String, f: File) {
             if (f.isDirectory) {
-                list.add(SendEnt(rel, f, true, 0))
+                list.add(SendEnt(rel, f, true, 0, 0))
                 f.listFiles()?.sortedBy { it.name }?.forEach { walk("$rel/${it.name}", it) }
             } else if (f.isFile) {
-                list.add(SendEnt(rel, f, false, f.length()))
+                list.add(SendEnt(rel, f, false, f.length(), f.lastModified()))
             }
         }
         for (f in srcs) walk(f.name, f)
@@ -364,16 +398,22 @@ class FileService : IFileService.Stub() {
         log(cb, "Menyiapkan ${list.size} entri ($fileCount file, ${fmt(total)})")
 
         out.writeInt(list.size); out.writeLong(total)
-        for (e in list) { out.writeUTF(e.rel); out.writeByte(if (e.dir) 1 else 0); out.writeLong(e.size) }
+        for (e in list) { out.writeUTF(e.rel); out.writeByte(if (e.dir) 1 else 0); out.writeLong(e.size); out.writeLong(e.mtime) }
         out.flush()
-        if (inp.readByte().toInt() != 1) throw IOException("Ditolak penerima: ${inp.readUTF()}")
+        if (inp.readByte().toInt() != 1) throw Rejected("Ditolak penerima: ${inp.readUTF()}")
         inp.readUTF()
+        val offsets = LongArray(list.size) { inp.readLong() }
 
         val job = Job(cb, total)
-        for (e in list) {
+        job.skip(offsets.sum())
+        if (offsets.any { it > 0 }) log(cb, "Melanjutkan: ${fmt(offsets.sum())} sudah diterima")
+        for ((idx, e) in list.withIndex()) {
             if (e.dir) continue
+            val off = offsets[idx]
+            if (off < 0 || off > e.size) throw IOException("Offset lanjutan tidak valid")
             FileInputStream(e.f).use { i ->
-                var left = e.size
+                if (off > 0) i.channel.position(off)
+                var left = e.size - off
                 while (left > 0) {
                     val n = i.read(job.buf, 0, minOf(left, job.buf.size.toLong()).toInt())
                     if (n < 0) throw EOFException("File berubah saat dikirim: ${e.rel}")
@@ -445,6 +485,28 @@ class FileService : IFileService.Stub() {
         }
     }
 
+    /**
+     * Jalankan satu sesi transfer; bila koneksi putus di tengah jalan, sambung lagi dan lanjutkan dari
+     * byte terakhir (penerima menyimpan sisa file .ngpart). Penolakan (PIN salah dsb.) tidak diulang.
+     */
+    private fun withResume(cb: IProgressCallback, session: () -> Unit) {
+        val maxTry = 5
+        var attempt = 1
+        while (true) {
+            try { session(); return }
+            catch (t: Throwable) {
+                val busy = t is Rejected && (t.message ?: "").contains("sibuk")
+                val net = t is java.net.SocketException || t is EOFException || t is java.net.SocketTimeoutException
+                if (cancelled || attempt >= maxTry || !(busy || net)) throw t
+                log(cb, "Koneksi terputus (${t.message ?: t.javaClass.simpleName}), mencoba lanjut $attempt/${maxTry - 1}...")
+                var waited = 0L
+                while (waited < 3000L * attempt && !cancelled) { Thread.sleep(250); waited += 250 }
+                if (cancelled) throw t
+                attempt++
+            }
+        }
+    }
+
     private fun startClient(cb: IProgressCallback, block: () -> Unit) {
         if (running) { cb.onFinish(false, "Transfer lain masih berjalan", 0, 0); return }
         cancelled = false
@@ -453,7 +515,11 @@ class FileService : IFileService.Stub() {
             try { block() }
             catch (t: Throwable) {
                 if (cancelled) { log(cb, "ERR dibatalkan"); finish(cb, false, "Dibatalkan", 0, 0) }
-                else { log(cb, "ERR ${t.message}"); finish(cb, false, "Gagal: ${t.message}", 0, 0) }
+                else {
+                    log(cb, "ERR ${t.message}")
+                    val resumable = t is java.net.SocketException || t is EOFException || t is java.net.SocketTimeoutException
+                    finish(cb, false, "Gagal: ${t.message}" + if (resumable) ". Kirim ulang untuk melanjutkan dari titik terakhir." else "", 0, 0)
+                }
             } finally { running = false }
         }.start()
     }
@@ -467,32 +533,36 @@ class FileService : IFileService.Stub() {
 
     /** remoteDir == null: kirim ke folder terima (mode 2); selain itu ke folder pilihan di perangkat lain (mode 5). */
     private fun doSend(host: String, port: Int, pin: String, name: String, srcs: Array<String>, remoteDir: String?, cb: IProgressCallback) {
-        withConn(host, port, if (remoteDir == null) 2 else 5, pin, name, 8000, 60_000) { c ->
+        withResume(cb) {
+          withConn(host, port, if (remoteDir == null) 2 else 5, pin, name, 8000, 60_000) { c ->
             log(cb, "OK     terautentikasi ke ${c.peerName}")
             if (remoteDir != null) {
                 c.out.writeUTF(remoteDir); c.out.flush()
-                if (c.inp.readByte().toInt() != 1) throw IOException("Ditolak penerima: ${c.inp.readUTF()}")
+                if (c.inp.readByte().toInt() != 1) throw Rejected("Ditolak penerima: ${c.inp.readUTF()}")
                 c.inp.readUTF()
             }
             val r = sendSession(c.inp, c.out, srcs.map { File(it) }, cb, c.peerName)
             finish(cb, r.ok, r.msg, r.done, r.total)
+          }
         }
     }
 
     override fun pull(host: String, port: Int, pin: String, deviceName: String, remotePaths: Array<String>,
                       destDir: String, cb: IProgressCallback) = startClient(cb) {
-        withConn(host, port, 4, pin, deviceName, 8000, 60_000) { c ->
+        withResume(cb) {
+         withConn(host, port, 4, pin, deviceName, 8000, 60_000) { c ->
             log(cb, "OK     terautentikasi ke ${c.peerName}")
             c.out.writeInt(remotePaths.size)
             remotePaths.forEach { c.out.writeUTF(it) }
             c.out.flush()
-            if (c.inp.readByte().toInt() != 1) throw IOException("Ditolak: ${c.inp.readUTF()}")
+            if (c.inp.readByte().toInt() != 1) throw Rejected("Ditolak: ${c.inp.readUTF()}")
             c.inp.readUTF()
             val dest = File(destDir)
             dest.mkdirs()
             if (!dest.isDirectory) throw IOException("Folder tujuan tidak valid")
             val r = receiveSession(c.inp, c.out, dest, c.peerName, cb)
             finish(cb, r.ok, r.msg, r.done, r.total)
+         }
         }
     }
 
@@ -853,6 +923,9 @@ class FileService : IFileService.Stub() {
         private var lastDone = 0L
         private var speed = 0.0
         val buf = ByteArray(1 shl 20)
+
+        /** Byte yang sudah ada dihitung selesai tanpa merusak perhitungan kecepatan. */
+        fun skip(n: Long) { done += n; lastDone += n }
 
         fun emit(cur: String, force: Boolean = false) {
             val now = System.nanoTime()

@@ -4,7 +4,7 @@ Berbagi aplikasi dengan mudah. Ngirim menggabungkan pengirim file lewat Wi-Fi, F
 file manager dalam satu aplikasi Android. Akses ke `Android/data` dan `Android/obb` lewat Shizuku, jadi
 tanpa root dan tanpa SAF.
 
-Versi sekarang v2.4. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
+Versi sekarang v2.5. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
 [GitHub Releases](https://github.com/UdyneO2/Ngirim/releases).
 
 ## Fitur
@@ -17,7 +17,7 @@ Kirim dan terima
 - [x] Saklar Terima ON/OFF; HP lain yang aktif muncul sendiri di daftar
 - [x] Progress langsung (persen, kecepatan, sisa waktu) dan bisa dibatalkan
 - [ ] Enkripsi transfer (TLS) supaya aman di jaringan umum
-- [ ] Lanjutkan transfer yang terputus
+- [x] Lanjutkan transfer yang terputus (otomatis menyambung lagi, sisa file disimpan sebagai `.ngpart`)
 - [x] Pairing lewat QR: tampilkan QR di penerima, pindai dengan kamera apa pun (tanpa ketik PIN)
 - [x] Pemindai QR di dalam aplikasi (tombol Pindai QR)
 - [ ] Kirim ke beberapa perangkat sekaligus
@@ -170,7 +170,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v2.4 && git push origin v2.4` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v2.5 && git push origin v2.5` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.

@@ -2,6 +2,15 @@
 
 Versi terbaru di atas. Di dalam aplikasi, riwayat ini ada di Pengaturan > Riwayat perubahan.
 
+## v2.5 (11 Nov 2026)
+
+- Transfer yang putus (Wi-Fi hilang, aplikasi ditutup, baterai habis) sekarang bisa dilanjutkan. Penerima
+  menyimpan bagian yang sudah masuk sebagai file `.ngpart`; saat kamu mengirim ulang file yang sama,
+  hanya sisanya yang dikirim. File dianggap sama bila nama, ukuran, dan waktu ubahnya sama.
+- Saat koneksi putus di tengah jalan, Ngirim mencoba menyambung lagi sendiri (sampai 4 kali) sebelum menyerah.
+- Sisa `.ngpart` yang tidak pernah dilanjutkan dihapus otomatis setelah 7 hari, saat Terima diaktifkan.
+- Protokol berubah: kedua perangkat harus sama-sama v2.5. Versi lama menampilkan pesan "Versi protokol berbeda".
+
 ## v2.4 (11 Nov 2026)
 
 - Tombol **Pindai QR** di tab Wi-Fi membuka kamera di dalam Ngirim, jadi tidak perlu aplikasi pemindai
