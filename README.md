@@ -4,7 +4,7 @@ Berbagi aplikasi dengan mudah. Ngirim menggabungkan pengirim file lewat Wi-Fi, F
 file manager dalam satu aplikasi Android. Akses ke `Android/data` dan `Android/obb` lewat Shizuku, jadi
 tanpa root dan tanpa SAF.
 
-Versi sekarang v2.7. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
+Versi sekarang v2.8. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
 [GitHub Releases](https://github.com/UdyneO2/Ngirim/releases).
 
 ## Fitur
@@ -83,14 +83,23 @@ Untuk sekarang hanya aksara Latin, karena font bawaan antarmuka belum memuat aks
 - Gaya visual terinspirasi antarmuka Windows 10.
 - Dibuat dan dirawat oleh [UdyneO2](https://github.com/UdyneO2).
 
+## Lisensi
+
+Ngirim dirilis dengan [lisensi MIT](LICENSE): boleh dipakai, diubah, dan dibagikan, termasuk untuk keperluan
+komersial, selama pemberitahuan hak cipta dan teks lisensi disertakan. Perangkat lunak ini diberikan apa adanya,
+tanpa jaminan.
+
+Pustaka pihak ketiga tetap memakai lisensinya masing-masing: Dear ImGui (MIT), Shizuku dan Shizuku-API (Apache 2.0),
+ZXing dan zxing-android-embedded (Apache 2.0).
+
 ## Cara pakai
 
 ### File manager (tab Lokal)
 1. Buka Ngirim, pastikan status Shizuku hijau (ketuk **Hubungkan Shizuku** lalu izinkan jika perlu).
 2. Ketuk folder untuk masuk, atau pakai *Akses cepat* dan *Naik*. Ketuk kotak centang untuk memilih.
-3. **Salin** atau **Potong**, pindah ke folder tujuan, lalu **Tempel**. **Hapus** memindahkan ke
+3. **Tekan lama** item untuk membuka menu (Salin, Potong, Hapus, Pasang, Arsipkan, dll.). Pindah ke folder tujuan lalu pilih **Tempel**. **Hapus** memindahkan ke
    `/sdcard/Ngirim/.Sampah` (bisa dimatikan di Pengaturan; isi `Android/data` dan `Android/obb` dihapus permanen).
-4. **Sematkan folder ini** menambahkan pintasan favorit. **Kirim** memasukkan item terpilih ke daftar kirim Wi-Fi.
+4. **Sematkan folder ini** menambahkan pintasan favorit. **Kirim** (di menu tekan-lama) memasukkan item terpilih ke daftar kirim Wi-Fi.
 
 ### Backup APK ke XAPK
 1. Di tab Lokal ketuk **Backup APK**, pilih format (XAPK atau APK + split dalam folder).
@@ -170,7 +179,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v2.7 && git push origin v2.7` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v2.8 && git push origin v2.8` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.

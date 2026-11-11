@@ -455,6 +455,13 @@ const Pair kEn[] = {
     {"Tekan lama file, folder, atau APK di file manager untuk membuka menu seperti klik kanan", "Long-press a file, folder or APK in the file manager to open a right-click style menu"},
     {"Kembali: naik folder, lalu pindah ke Lokal, lalu tekan 2x untuk keluar", "Back: go up a folder, then switch to Local, then press twice to exit"},
     {"File manager jadi halaman utama", "The file manager is now the home page"},
+    {"Lisensi", "License"},
+    {"Boleh dipakai, diubah, dan dibagikan selama pemberitahuan hak cipta ini disertakan. Tanpa jaminan.", "Free to use, modify and share as long as this copyright notice is included. No warranty."},
+    {"Teks lengkap ada di berkas LICENSE di repositori.", "The full text is in the LICENSE file in the repository."},
+    {"Menu ringkas dan lisensi", "Compact menu and license"},
+    {"Tombol aksi di atas Akses cepat dihapus; semua ada di menu tekan-lama", "The action buttons above Quick access are gone; everything is in the long-press menu"},
+    {"Menu lebih rapat, dan tekan lama di area kosong membuka Tempel / Folder baru", "Tighter menu, and a long-press on empty space opens Paste / New folder"},
+    {"Lisensi MIT ditambahkan, lengkap dengan lisensi pustaka pihak ketiga", "MIT license added, with the licenses of third-party libraries"},
 };
 
 struct Table { const char* code; const char* name; const Pair* pairs; size_t n; };

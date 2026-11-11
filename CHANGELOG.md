@@ -2,6 +2,15 @@
 
 Versi terbaru di atas. Di dalam aplikasi, riwayat ini ada di Pengaturan > Riwayat perubahan.
 
+## v2.8 (11 Nov 2026)
+
+- Tombol aksi item (Salin, Potong, Hapus, dst.) di atas Akses cepat dihapus karena semuanya sudah ada di
+  menu tekan-lama. Yang tersisa: Folder baru, Semua, Segarkan, dan Backup APK.
+- Menu tekan-lama dibuat lebih rapat (baris dan jarak lebih kecil). Tekan lama di area kosong daftar
+  membuka menu Tempel, Folder baru, Semua, dan Segarkan.
+- Lisensi **MIT** ditambahkan (berkas `LICENSE`, bagian Lisensi di README, dan di Pengaturan > Tentang),
+  beserta daftar lisensi pustaka pihak ketiga.
+
 ## v2.7 (11 Nov 2026)
 
 - **Menu tekan-lama** di file manager, seperti klik kanan di Windows: tahan satu file, folder, atau APK

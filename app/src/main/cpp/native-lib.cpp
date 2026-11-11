@@ -23,7 +23,7 @@
 
 namespace {
 
-constexpr const char* kVersion = "v2.7";
+constexpr const char* kVersion = "v2.8";
 
 std::string urlEncode(const std::string& in) {
     static const char* hex = "0123456789ABCDEF";
@@ -256,6 +256,10 @@ const std::vector<Rilis> kRilis = {
      {"Tekan lama file, folder, atau APK di file manager untuk membuka menu seperti klik kanan",
       "Kembali: naik folder, lalu pindah ke Lokal, lalu tekan 2x untuk keluar",
       "File manager jadi halaman utama"}},
+    {"v2.8", "Menu ringkas dan lisensi", "11 Nov 2026",
+     {"Tombol aksi di atas Akses cepat dihapus; semua ada di menu tekan-lama",
+      "Menu lebih rapat, dan tekan lama di area kosong membuka Tempel / Folder baru",
+      "Lisensi MIT ditambahkan, lengkap dengan lisensi pustaka pihak ketiga"}},
 };
 
 const std::vector<const char*> kBatasan = {
@@ -658,12 +662,13 @@ void breadcrumb() {
 }
 
 // ---- Menu konteks (tekan lama pada baris), seperti klik kanan di Windows
-struct CtxReq { bool want = false; ImVec2 pos{0, 0}; } g_ctxReq;
+struct CtxReq { bool want = false, blank = false; ImVec2 pos{0, 0}; } g_ctxReq;
 std::atomic<bool> g_ctxOpen{false}, g_ctxClose{false};
 
 void fmContextMenu(bool busy) {
     const float d = g_density;
-    if (g_ctxReq.want) { g_ctxReq.want = false; ImGui::OpenPopup("fm_ctx"); }
+    static bool blankMenu = false;
+    if (g_ctxReq.want) { g_ctxReq.want = false; blankMenu = g_ctxReq.blank; ImGui::OpenPopup("fm_ctx"); }
     struct CI { std::string label, action; bool sep; };
     std::vector<CI> it;
     const Entry* one = nullptr;
@@ -673,7 +678,12 @@ void fmContextMenu(bool busy) {
     const std::string sel = idxSel(S.fm);
     auto add = [&](const char* label, const std::string& a) { it.push_back({label, a, false}); };
     auto sepr = [&]() { if (!it.empty() && !it.back().sep) it.push_back({"", "", true}); };
-    if (nSel == 1 && one) {
+    if (blankMenu) {
+        if (S.clipCount > 0) { char b[64]; snprintf(b, sizeof b, T("Tempel (%d)"), S.clipCount); add(b, "FM|PASTE"); }
+        add(T("Folder baru"), "FM|NEW");
+        add(T("Semua"), "FM|ALL");
+        add(T("Segarkan"), "FM|REF");
+    } else if (nSel == 1 && one) {
         if (one->dir) add(T("Buka folder"), "FM|OPEN|" + sel);
         else {
             add(T("Buka"), "FM|VIEW|" + sel);
@@ -684,6 +694,7 @@ void fmContextMenu(bool busy) {
         }
         sepr();
     }
+    if (!blankMenu) {
     if (nSel > 0) { add(T("Salin"), "FM|COPY|" + sel); add(T("Potong"), "FM|CUT|" + sel); }
     if (S.clipCount > 0) {
         char b[64]; snprintf(b, sizeof b, T("Tempel (%d)"), S.clipCount);
@@ -696,11 +707,12 @@ void fmContextMenu(bool busy) {
     if (nSel > 0 && S.shizuku) add(T("Arsipkan"), "FM|ZIP|" + sel);
     if (nFile > 0 && nFile == nSel) add(T("Bagikan"), "FM|SHARE|" + sel);
     if (nSel > 0) { add(T("Kirim"), "FM|SEND|" + sel); add(T("Properti"), "FM|PROP|" + sel); }
+    }
     while (!it.empty() && it.back().sep) it.pop_back();
 
-    const float rowH = 42.f * d, w = 230.f * d, pad = 6.f * d;
-    float h = pad * 2 + 30.f * d;
-    for (auto& c : it) h += c.sep ? 9.f * d : rowH;
+    const float rowH = 34.f * d, w = 190.f * d, pad = 4.f * d;
+    float h = pad * 2 + (blankMenu ? 0.f : 24.f * d);
+    for (auto& c : it) h += c.sep ? 5.f * d : rowH;
     const ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImVec2 pos = g_ctxReq.pos;
     pos.x = std::max(6.f * d, std::min(pos.x, ds.x - w - 6.f * d));
@@ -716,25 +728,32 @@ void fmContextMenu(bool busy) {
     g_ctxOpen = open;
     if (!open) return;
     if (g_ctxClose.exchange(false) || busy || it.empty()) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-    {
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    ImGui::SetWindowFontScale(0.92f);
+    if (!blankMenu) {
         std::string head;
-        if (nSel == 1 && one) head = tailEllipsis(one->name, 24);
+        if (nSel == 1 && one) head = tailEllipsis(one->name, 22);
         else { char b[48]; snprintf(b, sizeof b, T("%d dipilih"), nSel); head = b; }
         ImGui::PushStyleColor(ImGuiCol_Text, g_pal.dim);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6.f * d);
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("%s", head.c_str());
         ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, 4.f * d));
         ImGui::Separator();
     }
     ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.f, 0.5f));
     int k = 0;
     for (auto& c : it) {
-        if (c.sep) { ImGui::Dummy(ImVec2(0, 3.f * d)); ImGui::Separator(); ImGui::Dummy(ImVec2(0, 3.f * d)); continue; }
+        if (c.sep) { ImGui::Dummy(ImVec2(0, 1.f * d)); ImGui::Separator(); ImGui::Dummy(ImVec2(0, 1.f * d)); continue; }
         std::string id = "  " + c.label + "##ctx" + std::to_string(k++);
-        if (ImGui::Selectable(id.c_str(), false, 0, ImVec2(0, rowH))) { act(c.action); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Selectable(id.c_str(), false, 0, ImVec2(0, rowH))) {
+            if (c.action == "FM|ALL") { for (auto& e : S.fm) e.sel = true; }   // pilihan hanya ada di sisi native
+            else act(c.action);
+            ImGui::CloseCurrentPopup();
+        }
     }
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
+    ImGui::SetWindowFontScale(1.f);
     ImGui::EndPopup();
 }
 
@@ -748,59 +767,10 @@ void drawFiles() {
     beginPanel("fm_head");
     breadcrumb();
 
-    // ribbon
+    // ribbon: aksi per item ada di menu tekan-lama; di sini hanya yang berlaku untuk folder/daftar
     bool first = true;
-    ImGui::BeginDisabled(nSel == 0 || busy);
-    if (wrapButton(T("Salin##fm"), first)) act("FM|COPY|" + idxSel(S.fm));
-    if (wrapButton(T("Potong##fm"), first)) act("FM|CUT|" + idxSel(S.fm));
-    ImGui::EndDisabled();
-    ImGui::BeginDisabled(S.clipCount == 0 || busy);
-    std::string pl;
-    if (S.clipCount) {
-        char b[96];
-        snprintf(b, sizeof b, S.clipCut ? T("Tempel (%d, potong)") : T("Tempel (%d)"), S.clipCount);
-        pl = std::string(b) + "##fm";
-    } else pl = T("Tempel##fm");
-    if (wrapButton(pl, first)) act("FM|PASTE");
-    ImGui::EndDisabled();
-    ImGui::BeginDisabled(nSel == 0 || busy);
-    if (wrapButton(T("Hapus##fm"), first)) act("FM|DEL|" + idxSel(S.fm));
-    ImGui::EndDisabled();
-    ImGui::BeginDisabled(nSel != 1 || busy);
-    if (wrapButton(T("Ubah nama##fm"), first)) act("FM|REN|" + idxSel(S.fm));
-    ImGui::EndDisabled();
     ImGui::BeginDisabled(busy);
     if (wrapButton(T("Folder baru##fm"), first)) act("FM|NEW");
-    ImGui::EndDisabled();
-    {
-        const Entry* one = nullptr; int nFile = 0;
-        for (auto& e : S.fm) if (e.sel) { one = &e; if (!e.dir) nFile++; }
-        const std::string ex = (nSel == 1 && one) ? lowerExt(one->name) : "";
-        ImGui::BeginDisabled(nSel != 1 || !one || one->dir || busy);
-        if (wrapButton(T("Buka##fm"), first)) act("FM|VIEW|" + idxSel(S.fm));
-        ImGui::EndDisabled();
-        const bool isImg = ex == "jpg" || ex == "jpeg" || ex == "png" || ex == "webp" || ex == "gif" || ex == "bmp" || ex == "heic" || ex == "heif";
-        ImGui::BeginDisabled(!isImg || busy);
-        if (wrapButton(T("Pratinjau##fm"), first)) act("FM|PREVIEW|" + idxSel(S.fm));
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(nFile == 0 || nFile != nSel || busy);
-        if (wrapButton(T("Bagikan##fm"), first)) act("FM|SHARE|" + idxSel(S.fm));
-        ImGui::EndDisabled();
-        const bool isBundle = ex == "xapk" || ex == "apks" || ex == "apkm";
-        const bool canInstall = ex == "apk" || (isBundle && S.shizuku);
-        ImGui::BeginDisabled(!canInstall || busy);
-        if (wrapButton(T("Pasang##fm"), first, ex == "apk" || isBundle)) act("FM|INSTALL|" + idxSel(S.fm));
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(ex != "zip" || !S.shizuku || busy);
-        if (wrapButton(T("Ekstrak##fm"), first)) act("FM|UNZIP|" + idxSel(S.fm));
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(nSel == 0 || !S.shizuku || busy);
-        if (wrapButton(T("Arsipkan##fm"), first)) act("FM|ZIP|" + idxSel(S.fm));
-        ImGui::EndDisabled();
-    }
-    ImGui::BeginDisabled(nSel == 0);
-    if (wrapButton(T("Properti##fm"), first)) act("FM|PROP|" + idxSel(S.fm));
-    if (wrapButton(T("Kirim##fm"), first)) act("FM|SEND|" + idxSel(S.fm));
     ImGui::EndDisabled();
     if (wrapButton(nSel == (int)S.fm.size() && nSel > 0 ? T("Batal##fm") : T("Semua##fm"), first))
         for (auto& e : S.fm) e.sel = !(nSel == (int)S.fm.size() && nSel > 0);
@@ -858,19 +828,27 @@ void drawFiles() {
         }
     }
     g_ds.end(&S.fm);
-    if (lpIdx >= 0) {
+    {
+        // tekan lama di area kosong daftar: menu Tempel / Folder baru / Semua / Segarkan
+        ImGuiIO& io = ImGui::GetIO();
+        if (ImGui::IsMouseClicked(0) && !g_ctxOpen && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            io.MousePos.y >= ImGui::GetCursorScreenPos().y) {
+            lpIdx = -2; lpFired = false; lpPos = io.MousePos;
+        }
+    }
+    if (lpIdx != -1) {
         ImGuiIO& io = ImGui::GetIO();
         const float dx = io.MousePos.x - lpPos.x, dy = io.MousePos.y - lpPos.y;
         if (!io.MouseDown[0] || dx * dx + dy * dy > 100.f * d * d) lpIdx = -1;
         else if (!lpFired && !busy && io.MouseDownDuration[0] > 0.5f && lpIdx < (int)S.fm.size()) {
             lpFired = true;
             ImGui::ClearActiveID();  // lepas jari nanti tidak dihitung sebagai ketukan
-            if (!S.fm[lpIdx].sel) { for (auto& e : S.fm) e.sel = false; S.fm[lpIdx].sel = true; }
-            g_ctxReq.want = true; g_ctxReq.pos = lpPos;
+            if (lpIdx >= 0 && !S.fm[lpIdx].sel) { for (auto& e : S.fm) e.sel = false; S.fm[lpIdx].sel = true; }
+            g_ctxReq.want = true; g_ctxReq.pos = lpPos; g_ctxReq.blank = lpIdx < 0;
             act("HAPTIC");
         }
     }
-    if (!g_ds.blocksScroll(&S.fm) && !(lpFired && lpIdx >= 0)) touchScroll();
+    if (!g_ds.blocksScroll(&S.fm) && !(lpFired && lpIdx != -1)) touchScroll();
     ImGui::EndChild();
     fmContextMenu(busy);
 
@@ -1313,6 +1291,19 @@ void drawSettings() {
     ImGui::Text(T("Versi %s"), kVersion);
     dimWrapped(T("Dibuat oleh UdyneO2. Dibangun dengan Dear ImGui, Shizuku API, dan Kotlin."));
     dimWrapped("github.com/UdyneO2/Ngirim");
+    if (ImGui::TreeNode(T("Lisensi"))) {
+        ImGui::SetWindowFontScale(0.92f);
+        ImGui::TextWrapped("Ngirim - MIT License");
+        dimWrapped("Copyright (c) 2026 UdyneO2");
+        dimWrapped(T("Boleh dipakai, diubah, dan dibagikan selama pemberitahuan hak cipta ini disertakan. Tanpa jaminan."));
+        ImGui::Spacing();
+        ImGui::TextWrapped("Dear ImGui - MIT License (Omar Cornut)");
+        ImGui::TextWrapped("Shizuku, Shizuku-API - Apache License 2.0 (RikkaApps)");
+        ImGui::TextWrapped("ZXing, zxing-android-embedded - Apache License 2.0");
+        dimWrapped(T("Teks lengkap ada di berkas LICENSE di repositori."));
+        ImGui::SetWindowFontScale(1.f);
+        ImGui::TreePop();
+    }
 
     ImGui::Spacing();
     {
