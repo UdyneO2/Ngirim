@@ -3,9 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Versi bisa di-override dari CI: -PversionName=2.2 -PversionCode=7
-val vName = (project.findProperty("versionName") as String?) ?: "2.2"
-val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 7
+// Versi bisa di-override dari CI: -PversionName=2.4 -PversionCode=9
+val vName = (project.findProperty("versionName") as String?) ?: "2.4"
+val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 9
 
 android {
     namespace = "com.udyneos.ngirim"
@@ -61,4 +61,6 @@ android {
 dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+    // Pemindai QR bawaan (kamera + izin ditangani pustaka)
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }

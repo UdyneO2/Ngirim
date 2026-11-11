@@ -30,4 +30,5 @@ interface IFileService {
     // Pasang APK senyap lewat `pm install` (uid shell) dan ekstrak ZIP
     void installApk(in String[] paths, IProgressCallback cb) = 19;
     void unzip(String zip, String destDir, IProgressCallback cb) = 20;
+    void zip(in String[] srcs, String outZip, IProgressCallback cb) = 21;   // buat arsip ZIP dari file/folder
 }

@@ -265,6 +265,7 @@ class MainActivity : Activity() {
         bookmarks.addAll((prefs.getString("bookmarks", "") ?: "").split("\n").filter { it.isNotEmpty() })
         Native.setBookmarks(bookmarks.toTypedArray())
         pushNetInfo()
+        handlePairLink(intent)
 
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
@@ -324,6 +325,70 @@ class MainActivity : Activity() {
         Shizuku.addBinderDeadListener(onDead)
         Shizuku.addRequestPermissionResultListener(onPerm)
         checkNetPerm()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePairLink(intent)
+    }
+
+    /** ngirim://pair?h=IP&p=PORT&pin=PIN&n=NAMA - dari QR di perangkat penerima. */
+    private fun handlePairLink(i: Intent?) {
+        val u = i?.data ?: return
+        if (i.action != Intent.ACTION_VIEW) return
+        i.data = null   // jangan diproses ulang saat Activity dibuat ulang
+        pairFromUri(u)
+    }
+
+    /** Buka pemindai kamera; hasilnya diterima di onActivityResult. */
+    private fun scanQr() {
+        try {
+            com.google.zxing.integration.android.IntentIntegrator(this)
+                .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+                .setPrompt(tr("Arahkan kamera ke QR di perangkat penerima"))
+                .setBeepEnabled(false)
+                .setOrientationLocked(false)
+                .initiateScan()
+        } catch (t: Throwable) {
+            Native.log("ERR pemindai QR gagal dibuka: ${t.message}")
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val text = com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(requestCode, resultCode, data)?.contents
+            ?: return
+        val u = try { Uri.parse(text) } catch (_: Throwable) { null }
+        if (u == null) { Native.log("ERR QR tidak valid"); return }
+        pairFromUri(u)
+    }
+
+    private fun pairFromUri(u: Uri) {
+        if (u.scheme != "ngirim" || u.host != "pair") { Native.log("ERR QR tidak valid"); return }
+        val host = u.getQueryParameter("h") ?: return
+        val port = u.getQueryParameter("p")?.toIntOrNull() ?: return
+        val pin = u.getQueryParameter("pin") ?: return
+        val name = (u.getQueryParameter("n") ?: "").ifEmpty { host }.take(40)
+        if (port !in 1..65535 || !Regex("[0-9]{1,3}(\\.[0-9]{1,3}){3}").matches(host) || !Regex("[0-9]{6}").matches(pin)) {
+            Native.log("ERR QR tidak valid"); return
+        }
+        confirm("Pasangkan dengan $name?", "Alamat $host:$port. Pasangkan hanya dengan perangkat yang kamu kenal.", "Pasangkan") {
+            Thread {
+                var waited = 0
+                while (svc == null && waited < 30_000) { Thread.sleep(250); waited += 250 }
+                val s = svc
+                if (s == null) { Native.log("ERR Shizuku belum siap"); return@Thread }
+                val err = try { s.checkPair(host, port, pin, myName) } catch (t: Throwable) { t.message ?: "error" }
+                if (err.isEmpty()) {
+                    paired = Peer(name, host, port, null); pairedPin = pin
+                    pushNetInfo()
+                    Native.log("OK     pairing dengan $name ($host:$port) lewat QR")
+                    Native.selectTab(1)
+                } else Native.log("ERR pairing gagal: $err")
+            }.start()
+        }
     }
 
     override fun onResume() {
@@ -469,6 +534,7 @@ class MainActivity : Activity() {
             "SET" -> setPref(p[1], p[2] == "1")
             "ACCENT" -> { accent = (p.getOrNull(1)?.toIntOrNull() ?: 0).coerceIn(0, 31); prefs.edit().putInt("accent", accent).apply(); pushSettings() }
             "LANG" -> { lang = (p.getOrNull(1) ?: "auto").take(8); prefs.edit().putString("lang", lang).apply(); pushSettings() }
+            "SCAN_QR" -> scanQr()
             "UPD_CHECK" -> checkUpdate(true)
             "SET_NAME" -> askText("Nama perangkat", "nama", false, myName) { v ->
                 if (v.isNotEmpty()) { myName = v.take(40); prefs.edit().putString("devName", myName).apply(); pushSettings() }
@@ -1080,6 +1146,16 @@ class MainActivity : Activity() {
                 Native.setFmProgress(true, 0, 0, 0.0, "Mengekstrak ${e.name}...")
                 worker.execute {
                     try { s.unzip(z, dst, fmCb) } catch (t: Throwable) { fmFail("gagal mengekstrak: ${t.message}") }
+                }
+            }
+            "ZIP" -> selected(arg).takeIf { it.isNotEmpty() }?.let { sel ->
+                val s = svc ?: return fmFail("Shizuku belum siap")
+                val base = if (sel.size == 1) sel[0].name.substringBeforeLast('.', sel[0].name) else (fmPath.trimEnd('/').substringAfterLast('/').ifEmpty { "arsip" })
+                val srcs = sel.map { joinPath(fmPath, it.name) }.toTypedArray()
+                val dst = joinPath(fmPath, "$base.zip")
+                Native.setFmProgress(true, 0, 0, 0.0, "Membuat arsip $base.zip...")
+                worker.execute {
+                    try { s.zip(srcs, dst, fmCb) } catch (t: Throwable) { fmFail("gagal membuat arsip: ${t.message}") }
                 }
             }
             "FIND" -> askText("Cari di folder ini", "nama berisi...", false, fmFilter) { v -> fmFilter = v; fmPublish() }

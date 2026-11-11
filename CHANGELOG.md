@@ -2,6 +2,20 @@
 
 Versi terbaru di atas. Di dalam aplikasi, riwayat ini ada di Pengaturan > Riwayat perubahan.
 
+## v2.4 (11 Nov 2026)
+
+- Tombol **Pindai QR** di tab Wi-Fi membuka kamera di dalam Ngirim, jadi tidak perlu aplikasi pemindai
+  lain. Izin kamera hanya diminta saat tombol ini dipakai. Memakai pustaka zxing-android-embedded.
+- Ikon aplikasi baru (adaptive icon, latar hitam).
+
+## v2.3 (10 Nov 2026)
+
+- File manager: tombol **Arsipkan** membuat `.zip` dari file atau folder yang dipilih, lengkap dengan
+  progress. Nama otomatis diberi akhiran (1), (2) bila sudah ada.
+- Pairing lewat QR: di tab Wi-Fi, saat Terima aktif, ketuk **Tampilkan QR**. Pindai dengan kamera atau
+  pemindai QR apa pun di perangkat pengirim; Ngirim terbuka, menanyakan konfirmasi, lalu memasangkan
+  tanpa mengetik PIN. QR berisi alamat dan PIN sesi itu, jadi tunjukkan hanya ke orang yang kamu percaya.
+
 ## v2.2 (10 Nov 2026)
 
 - Warna aksen: tujuh pilihan (biru, hijau, ungu, oranye, merah, teal, merah muda) di Pengaturan > Tampilan.

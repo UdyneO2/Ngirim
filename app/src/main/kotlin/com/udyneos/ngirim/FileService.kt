@@ -586,6 +586,61 @@ class FileService : IFileService.Stub() {
     }
 
     override fun unzip(zip: String, destDir: String, cb: IProgressCallback) = startClient(cb) { doUnzip(zip, destDir, cb) }
+    override fun zip(srcs: Array<String>, outZip: String, cb: IProgressCallback) = startClient(cb) { doZip(srcs, outZip, cb) }
+
+    private fun doZip(srcs: Array<String>, outZip: String, cb: IProgressCallback) {
+        val out = uniqueFile(File(outZip))
+        out.parentFile?.mkdirs()
+        // hitung total dulu supaya progress bermakna
+        fun sizeOfTree(f: File): Long =
+            if (f.isDirectory) (f.listFiles() ?: emptyArray()).sumOf { sizeOfTree(it) } else f.length()
+        val files = srcs.map { File(it) }.filter { it.exists() }
+        val total = files.sumOf { sizeOfTree(it) }
+        var done = 0L
+        var n = 0
+        var last = 0L
+        val buf = ByteArray(1 shl 16)
+        val outCanon = out.canonicalPath
+        try {
+            java.util.zip.ZipOutputStream(java.io.BufferedOutputStream(FileOutputStream(out))).use { zo ->
+                fun add(f: File, name: String) {
+                    if (cancelled) throw InterruptedException("cancel")
+                    if (f.canonicalPath == outCanon) return          // jangan masukkan arsip ke dirinya sendiri
+                    if (f.isDirectory) {
+                        zo.putNextEntry(java.util.zip.ZipEntry("$name/"))
+                        zo.closeEntry()
+                        for (c in (f.listFiles() ?: emptyArray()).sortedBy { it.name }) add(c, "$name/${c.name}")
+                        return
+                    }
+                    val ze = java.util.zip.ZipEntry(name)
+                    ze.time = f.lastModified()
+                    zo.putNextEntry(ze)
+                    try {
+                        java.io.FileInputStream(f).use { ins ->
+                            while (true) {
+                                val r = ins.read(buf)
+                                if (r < 0) break
+                                zo.write(buf, 0, r)
+                                done += r
+                                val now = System.nanoTime()
+                                if (now - last > 150_000_000L) { last = now; try { cb.onProgress(name, done, total, 0.0) } catch (_: Throwable) {} }
+                            }
+                        }
+                    } catch (e: IOException) {
+                        // file tak terbaca (mis. izin): lewati, jangan gagalkan seluruh arsip
+                        try { cb.onLog("ERR lewati ${f.name}: ${e.message}") } catch (_: Throwable) {}
+                    }
+                    zo.closeEntry()
+                    n++
+                }
+                for (f in files) add(f, f.name)
+            }
+        } catch (t: Throwable) {
+            out.delete()
+            throw t
+        }
+        finish(cb, true, "Arsip dibuat: ${out.name} ($n file)", done, total)
+    }
 
     private fun doUnzip(zip: String, destDir: String, cb: IProgressCallback) {
         val src = File(zip)

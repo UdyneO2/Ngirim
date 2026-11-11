@@ -2,7 +2,9 @@
 #include <GLES3/gl3.h>
 #include <unistd.h>
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -12,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "qr.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_opengl3.h"
@@ -19,7 +22,17 @@
 
 namespace {
 
-constexpr const char* kVersion = "v2.2";
+constexpr const char* kVersion = "v2.4";
+
+std::string urlEncode(const std::string& in) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string o;
+    for (unsigned char ch : in) {
+        if (isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '~') o += (char)ch;
+        else { o += '%'; o += hex[ch >> 4]; o += hex[ch & 15]; }
+    }
+    return o;
+}
 
 struct Item { std::string name, sub; long long size = 0; bool sel = false; };
 struct Entry { std::string name; long long size = 0; long long mtime = 0; bool dir = false; bool sel = false; };
@@ -220,6 +233,12 @@ const std::vector<Rilis> kRilis = {
       "Bahasa Indonesia dan Inggris, otomatis mengikuti bahasa sistem",
       "Tabel bahasa terpisah, jadi bahasa baru mudah ditambahkan",
       "Riwayat perubahan di Pengaturan diringkas dalam satu bagian lipat"}},
+    {"v2.3", "Arsip ZIP dan QR", "10 Nov 2026",
+     {"Tombol Arsipkan di file manager: buat .zip dari file/folder terpilih",
+      "Pairing lewat QR: tampilkan QR di penerima, pindai dengan kamera pengirim"}},
+    {"v2.4", "Pemindai QR dan ikon baru", "11 Nov 2026",
+     {"Tombol Pindai QR di tab Wi-Fi: kamera langsung di dalam Ngirim",
+      "Ikon aplikasi baru"}},
 };
 
 const std::vector<const char*> kBatasan = {
@@ -629,6 +648,9 @@ void drawFiles() {
         ImGui::BeginDisabled(ex != "zip" || !S.shizuku || busy);
         if (wrapButton(T("Ekstrak##fm"), first)) act("FM|UNZIP|" + idxSel(S.fm));
         ImGui::EndDisabled();
+        ImGui::BeginDisabled(nSel == 0 || !S.shizuku || busy);
+        if (wrapButton(T("Arsipkan##fm"), first)) act("FM|ZIP|" + idxSel(S.fm));
+        ImGui::EndDisabled();
     }
     ImGui::BeginDisabled(nSel == 0);
     if (wrapButton(T("Properti##fm"), first)) act("FM|PROP|" + idxSel(S.fm));
@@ -770,7 +792,14 @@ void drawNet() {
     const float d = g_density;
     const ImVec4 ok = g_pal.ok, warn = g_pal.warn, acc = g_pal.accent;
 
-    ImGui::TextColored(S.permOk ? ok : warn, "%s", i18n::tr(S.permMsg).c_str());
+    {
+        std::string shown, line;
+        for (size_t i = 0; i <= S.permMsg.size(); i++) {
+            if (i == S.permMsg.size() || S.permMsg[i] == '\n') { if (!shown.empty()) shown += '\n'; shown += i18n::tr(line); line.clear(); }
+            else line += S.permMsg[i];
+        }
+        ImGui::TextColored(S.permOk ? ok : warn, "%s", shown.c_str());
+    }
     if (!S.permOk) {
         if (ImGui::Button(T("Berikan izin / periksa ulang"), ImVec2(-FLT_MIN, 52.f * d))) act("NET_PERM");
     }
@@ -801,6 +830,42 @@ void drawNet() {
         ImGui::SetWindowFontScale(2.2f);
         ImGui::TextColored(warn, "%s", S.pin.c_str());
         ImGui::SetWindowFontScale(1.f);
+        // QR pairing: dipindai aplikasi kamera/pemindai apa pun, lalu membuka Ngirim di perangkat pengirim
+        static bool showQr = false;
+        if (ImGui::Button(showQr ? T("Sembunyikan QR##qr") : T("Tampilkan QR##qr"))) showQr = !showQr;
+        if (showQr) {
+            const size_t c = S.addr.rfind(':');
+            if (c != std::string::npos) {
+                std::string url = "ngirim://pair?h=" + S.addr.substr(0, c) + "&p=" + S.addr.substr(c + 1) +
+                                  "&pin=" + S.pin + "&n=" + urlEncode(S.devName);
+                static std::string cachedUrl;
+                static std::vector<std::vector<bool>> cachedQr;
+                if (url != cachedUrl) { cachedUrl = url; cachedQr = qr::encode(url); }
+                const int n = (int)cachedQr.size();
+                if (n > 0) {
+                    const int quiet = 3;
+                    const float avail = ImGui::GetContentRegionAvail().x;
+                    float cell = std::floor(std::min(avail, 260.f * d) / (float)(n + 2 * quiet));
+                    if (cell < 2.f) cell = 2.f;
+                    const float side = cell * (float)(n + 2 * quiet);
+                    ImVec2 q0 = ImGui::GetCursorScreenPos();
+                    ImGui::Dummy(ImVec2(side, side));
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    dl->AddRectFilled(q0, ImVec2(q0.x + side, q0.y + side), IM_COL32(255, 255, 255, 255));
+                    for (int y = 0; y < n; y++)
+                        for (int x = 0; x < n; x++)
+                            if (cachedQr[y][x]) {
+                                ImVec2 p0(q0.x + (x + quiet) * cell, q0.y + (y + quiet) * cell);
+                                dl->AddRectFilled(p0, ImVec2(p0.x + cell, p0.y + cell), IM_COL32(0, 0, 0, 255));
+                            }
+                } else {
+                    ImGui::TextDisabled("%s", T("QR tidak bisa dibuat."));
+                }
+                ImGui::PushStyleColor(ImGuiCol_Text, g_pal.dim);
+                ImGui::TextWrapped("%s", T("Pindai dengan kamera di perangkat pengirim; Ngirim terbuka dan memasangkan otomatis."));
+                ImGui::PopStyleColor();
+            }
+        }
     }
 
     // ---- Perangkat aktif
@@ -808,8 +873,10 @@ void drawNet() {
     if (ImGui::Button(T("Segarkan"))) act("NET_SCAN");
     ImGui::SameLine();
     if (ImGui::Button(T("IP manual"))) act("NET_MANUAL");
+    ImGui::SameLine();
+    if (ImGui::Button(T("Pindai QR"))) act("SCAN_QR");
     if (S.peers.empty()) ImGui::TextDisabled("%s", T("Belum ada. Nyalakan Terima di perangkat lain (satu Wi-Fi)."));
-    else ImGui::TextDisabled("%s", T("Ketuk perangkat, lalu masukkan PIN dari layarnya."));
+    else { ImGui::PushStyleColor(ImGuiCol_Text, g_pal.dim); ImGui::TextWrapped("%s", T("Ketuk perangkat, lalu masukkan PIN dari layarnya.")); ImGui::PopStyleColor(); }
     for (int i = 0; i < (int)S.peers.size(); i++) {
         ImVec2 q = ImGui::GetCursorScreenPos();
         std::string l = "##p" + std::to_string(i);
