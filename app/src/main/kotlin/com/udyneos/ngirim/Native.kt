@@ -16,7 +16,11 @@ object Native {
     @JvmStatic external fun setUpdateMsg(msg: String)
     @JvmStatic external fun tr(s: String): String
     @JvmStatic external fun selectTab(idx: Int)
-    @JvmStatic external fun setSettings(dark: Boolean, hidden: Boolean, trash: Boolean, xapkDir: String, devName: String, instShizuku: Boolean, autoUpdate: Boolean, accent: Int, lang: String, sysLang: String)
+
+    // pratinjau gambar: buf = piksel RGBA (direct ByteBuffer) atau null bila sedang memuat / gagal (msg)
+    @JvmStatic external fun setPreview(w: Int, h: Int, buf: java.nio.ByteBuffer?, name: String, idx: Int, cnt: Int, msg: String)
+    @JvmStatic external fun closePreview()
+    @JvmStatic external fun setSettings(dark: Boolean, hidden: Boolean, trash: Boolean, xapkDir: String, devName: String, instShizuku: Boolean, autoUpdate: Boolean, lang: String, sysLang: String)
 
     // file manager (tab Lokal)
     @JvmStatic external fun setFm(

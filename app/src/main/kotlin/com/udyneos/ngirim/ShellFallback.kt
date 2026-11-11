@@ -159,6 +159,7 @@ class ShellFallback private constructor(
     override fun backupXapk(jobs: Array<String>, cb: IProgressCallback) { call(18, jobs, cb) }
     override fun installApk(paths: Array<String>, cb: IProgressCallback) { call(19, paths, cb) }
     override fun unzip(zip: String, destDir: String, cb: IProgressCallback) { call(20, zip, destDir, cb) }
+    override fun installBundle(path: String, cb: IProgressCallback) { call(22, path, cb) }
     override fun zip(srcs: Array<String>, outZip: String, cb: IProgressCallback) { call(21, srcs, outZip, cb) }
 
     override fun destroy() {

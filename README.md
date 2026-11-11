@@ -4,7 +4,7 @@ Berbagi aplikasi dengan mudah. Ngirim menggabungkan pengirim file lewat Wi-Fi, F
 file manager dalam satu aplikasi Android. Akses ke `Android/data` dan `Android/obb` lewat Shizuku, jadi
 tanpa root dan tanpa SAF.
 
-Versi sekarang v2.5. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
+Versi sekarang v2.6. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
 [GitHub Releases](https://github.com/UdyneO2/Ngirim/releases).
 
 ## Fitur
@@ -25,15 +25,15 @@ Kirim dan terima
 FTP dua panel
 - [x] Dua folder berdampingan dengan pintasan folder dan favorit sendiri
 - [x] Panel kanan bisa diarahkan ke HP lain yang sudah dipasangkan, salin ke dua arah
-- [ ] Multi-pilih lewat geser
+- [x] Multi-pilih lewat geser di kolom kotak centang (FTP dan Lokal)
 
 File manager (tab Lokal)
 - [x] Salin, potong, tempel, hapus (ke tempat sampah), ubah nama, folder baru, properti, cari, urutkan
 - [x] Buka file, bagikan, pasang APK, ekstrak ZIP
 - [x] Akses cepat ke Download, DCIM, Pictures, Data, OBB, dan folder yang kamu sematkan
 - [x] Buat arsip ZIP dari item terpilih
-- [ ] Pratinjau gambar
-- [ ] Pasang XAPK/APKS langsung dari file manager
+- [x] Pratinjau gambar (zoom, geser, gambar berikutnya di folder yang sama)
+- [x] Pasang XAPK/APKS/APKM langsung dari file manager (OBB ikut disalin)
 
 Backup aplikasi
 - [x] Simpan beberapa aplikasi langsung jadi `.xapk` (manifest, ikon, base + split APK)
@@ -41,7 +41,6 @@ Backup aplikasi
 
 Tampilan dan pengaturan
 - [x] Tema Terang dan Gelap, tampilan terinspirasi Windows 10
-- [x] Warna aksen (7 pilihan)
 - [x] Bahasa Indonesia dan Inggris, otomatis mengikuti bahasa sistem
 - [x] Riwayat perubahan ringkas dalam satu bagian lipat
 - [x] Cek pembaruan dari GitHub Release dengan catatan rilis, lalu pasang langsung
@@ -50,7 +49,6 @@ Tampilan dan pengaturan
 - [x] Log dengan timestamp dan warna
 - [ ] Bahasa lain beraksara Latin (Spanyol, Jerman, dll.)
 - [ ] Bahasa beraksara non-Latin (butuh font tambahan)
-- [ ] Warna aksen bebas (pemilih warna sendiri)
 
 Punya usul? Buka issue di repo.
 
@@ -170,7 +168,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v2.5 && git push origin v2.5` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v2.6 && git push origin v2.6` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.

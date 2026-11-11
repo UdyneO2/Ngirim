@@ -171,6 +171,7 @@ object ShellHost {
             19 -> f.installApk(sa(0), cb(1))
             20 -> f.unzip(s(0), s(1), cb(2))
             21 -> f.zip(sa(0), s(1), cb(2))
+            22 -> f.installBundle(s(0), cb(1))
             else -> throw IllegalArgumentException("kode tidak dikenal: $code")
         }
     }

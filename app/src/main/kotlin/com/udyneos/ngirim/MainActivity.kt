@@ -532,9 +532,13 @@ class MainActivity : Activity() {
             }
             // pengaturan
             "SET" -> setPref(p[1], p[2] == "1")
-            "ACCENT" -> { accent = (p.getOrNull(1)?.toIntOrNull() ?: 0).coerceIn(0, 31); prefs.edit().putInt("accent", accent).apply(); pushSettings() }
             "LANG" -> { lang = (p.getOrNull(1) ?: "auto").take(8); prefs.edit().putString("lang", lang).apply(); pushSettings() }
             "SCAN_QR" -> scanQr()
+            "PV" -> when (p.getOrNull(1)) {
+                "CLOSE" -> closePreviewNow()
+                "NEXT" -> showPreview(pvIdx + 1)
+                "PREV" -> showPreview(pvIdx - 1)
+            }
             "UPD_CHECK" -> checkUpdate(true)
             "SET_NAME" -> askText("Nama perangkat", "nama", false, myName) { v ->
                 if (v.isNotEmpty()) { myName = v.take(40); prefs.edit().putString("devName", myName).apply(); pushSettings() }
@@ -989,7 +993,6 @@ class MainActivity : Activity() {
         showHidden = prefs.getBoolean("hidden", false)
         useTrash = prefs.getBoolean("trash", true)
         instShizuku = prefs.getBoolean("inst", false)
-        accent = prefs.getInt("accent", 0)
         lang = prefs.getString("lang", "auto") ?: "auto"
         autoUpdate = prefs.getBoolean("autoupd", true)
         xapkDir = prefs.getString("xapkDir", xapkDir) ?: xapkDir
@@ -998,7 +1001,6 @@ class MainActivity : Activity() {
         fmPublish()
     }
 
-    private var accent = 0
     private var lang = "auto"
 
     /** Bahasa sistem: kode 2 huruf; "in" lama dipetakan ke "id". */
@@ -1010,7 +1012,7 @@ class MainActivity : Activity() {
     private fun tr(s: String): String = try { Native.tr(s) } catch (_: Throwable) { s }
 
     private fun pushSettings() = Native.setSettings(
-        dark, showHidden, useTrash, xapkDir, myName, instShizuku, autoUpdate, accent, lang, sysLang())
+        dark, showHidden, useTrash, xapkDir, myName, instShizuku, autoUpdate, lang, sysLang())
 
     private fun setPref(key: String, v: Boolean) {
         val e = prefs.edit()
@@ -1136,10 +1138,25 @@ class MainActivity : Activity() {
             "VIEW" -> selected(arg).firstOrNull()?.takeIf { !it.isDir }?.let { e ->
                 stageFiles(listOf(joinPath(fmPath, e.name))) { openFile(it[0]) }
             }
+            "PREVIEW" -> selected(arg).firstOrNull()?.takeIf { !it.isDir && isImageName(it.name) }?.let { e ->
+                val imgs = fmView.filter { !it.isDir && isImageName(it.name) }
+                pvPaths = imgs.map { joinPath(fmPath, it.name) }
+                showPreview(imgs.indexOfFirst { it.name == e.name }.coerceAtLeast(0))
+            }
             "SHARE" -> selected(arg).filter { !it.isDir }.let { l ->
                 if (l.isNotEmpty()) stageFiles(l.map { joinPath(fmPath, it.name) }) { shareFiles(it) }
             }
-            "INSTALL" -> selected(arg).firstOrNull()?.takeIf { !it.isDir }?.let { installApkPath(joinPath(fmPath, it.name)) }
+            "INSTALL" -> selected(arg).firstOrNull()?.takeIf { !it.isDir }?.let { e ->
+                val ext = e.name.substringAfterLast('.', "").lowercase()
+                if (ext == "xapk" || ext == "apks" || ext == "apkm") {
+                    val s = svc ?: return fmFail("Pasang $ext butuh Shizuku")
+                    val p = joinPath(fmPath, e.name)
+                    Native.setFmProgress(true, 0, 0, 0.0, "Memasang ${e.name}...")
+                    worker.execute {
+                        try { s.installBundle(p, fmCb) } catch (t: Throwable) { fmFail("gagal memasang: ${t.message}") }
+                    }
+                } else installApkPath(joinPath(fmPath, e.name))
+            }
             "UNZIP" -> selected(arg).firstOrNull()?.takeIf { !it.isDir }?.let { e ->
                 val s = svc ?: return fmFail("Shizuku belum siap")
                 val z = joinPath(fmPath, e.name); val dst = fmPath
@@ -1173,6 +1190,7 @@ class MainActivity : Activity() {
 
     private val stageCb = object : IProgressCallback.Stub() {
         @Volatile var then: ((Boolean) -> Unit)? = null
+        @Volatile var fail: (() -> Unit)? = null
         override fun onProgress(current: String, done: Long, total: Long, bytesPerSec: Double) {
             Native.setFmProgress(true, done, total, bytesPerSec, current)
         }
@@ -1181,12 +1199,83 @@ class MainActivity : Activity() {
             Native.setFmProgress(false, done, total, 0.0, "")
             if (!ok) Native.log("ERR    menyiapkan file: $message")
             val t = then; then = null
-            if (ok) t?.invoke(true)
+            val f = fail; fail = null
+            if (ok) t?.invoke(true) else f?.invoke()
         }
     }
 
     /** Menyalin file ke cache aplikasi (lewat Shizuku bila perlu) agar bisa disajikan ke aplikasi lain. */
-    private fun stageFiles(paths: List<String>, then: (List<File>) -> Unit) {
+    // ---- pratinjau gambar
+    private var pvPaths: List<String> = emptyList()
+    private var pvIdx = 0
+    private val pvGen = java.util.concurrent.atomic.AtomicInteger()
+
+    private fun isImageName(n: String) = n.substringAfterLast('.', "").lowercase() in
+        setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif")
+
+    private fun closePreviewNow() {
+        pvGen.incrementAndGet()
+        pvPaths = emptyList()
+        Native.closePreview()
+    }
+
+    private fun showPreview(i: Int) {
+        val n = pvPaths.size
+        if (n == 0) return
+        val idx = ((i % n) + n) % n
+        pvIdx = idx
+        val p = pvPaths[idx]
+        val name = File(p).name
+        val gen = pvGen.incrementAndGet()
+        Native.setPreview(0, 0, null, name, idx, n, "Memuat...")
+        stageFiles(listOf(p), fail = { if (gen == pvGen.get()) Native.setPreview(0, 0, null, name, idx, n, "Gagal memuat gambar") }) { fs ->
+            worker.execute {
+                if (gen != pvGen.get()) return@execute
+                val r = try { decodeForPreview(fs[0]) } catch (t: Throwable) { null }
+                if (gen != pvGen.get()) return@execute
+                if (r == null) Native.setPreview(0, 0, null, name, idx, n, "Gagal memuat gambar")
+                else Native.setPreview(r.first.first, r.first.second, r.second, name, idx, n, "")
+            }
+        }
+    }
+
+    /** Dekode ke RGBA, diperkecil bila > 2048 px, orientasi EXIF diterapkan. */
+    private fun decodeForPreview(f: File): Pair<Pair<Int, Int>, java.nio.ByteBuffer>? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(f.path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 2048) sample *= 2
+        var bmp = android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+            ?: return null
+        val orient = try {
+            android.media.ExifInterface(f.path).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL)
+        } catch (_: Throwable) { 1 }
+        val m = android.graphics.Matrix()
+        when (orient) {
+            2 -> m.postScale(-1f, 1f)
+            3 -> m.postRotate(180f)
+            4 -> m.postScale(1f, -1f)
+            5 -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+            6 -> m.postRotate(90f)
+            7 -> { m.postRotate(-90f); m.postScale(-1f, 1f) }
+            8 -> m.postRotate(-90f)
+        }
+        if (!m.isIdentity) bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+        if (bmp.config != Bitmap.Config.ARGB_8888) bmp = bmp.copy(Bitmap.Config.ARGB_8888, false)
+        val buf = java.nio.ByteBuffer.allocateDirect(bmp.width * bmp.height * 4).order(java.nio.ByteOrder.nativeOrder())
+        bmp.copyPixelsToBuffer(buf)
+        buf.rewind()
+        return (bmp.width to bmp.height) to buf
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (pvPaths.isNotEmpty()) { closePreviewNow(); return }
+        @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
+    private fun stageFiles(paths: List<String>, fail: (() -> Unit)? = null, then: (List<File>) -> Unit) {
         worker.execute {
             val root = ShareProvider.root(this)
             try { root.listFiles()?.forEach { it.deleteRecursively() } } catch (_: Throwable) {}
@@ -1198,13 +1287,14 @@ class MainActivity : Activity() {
                 try {
                     paths.forEachIndexed { i, p -> File(p).copyTo(dsts[i], overwrite = true) }
                     runOnUiThread { then(dsts) }
-                } catch (t: Throwable) { fmFail("Shizuku belum siap dan file tidak terbaca langsung: ${t.message}") }
+                } catch (t: Throwable) { fmFail("Shizuku belum siap dan file tidak terbaca langsung: ${t.message}"); fail?.invoke() }
                 return@execute
             }
             Native.setFmProgress(true, 0, 0, 0.0, "Menyiapkan file...")
             stageCb.then = { runOnUiThread { then(dsts) } }
+            stageCb.fail = fail
             try { s.start(paths.toTypedArray(), dsts.map { it.path }.toTypedArray(), false, stageCb) }
-            catch (t: Throwable) { stageCb.then = null; fmFail("gagal menyiapkan file: ${t.message}") }
+            catch (t: Throwable) { stageCb.then = null; stageCb.fail = null; fmFail("gagal menyiapkan file: ${t.message}"); fail?.invoke() }
         }
     }
 

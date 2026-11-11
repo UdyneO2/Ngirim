@@ -656,7 +656,140 @@ class FileService : IFileService.Stub() {
     }
 
     override fun unzip(zip: String, destDir: String, cb: IProgressCallback) = startClient(cb) { doUnzip(zip, destDir, cb) }
+    override fun installBundle(path: String, cb: IProgressCallback) = startClient(cb) { doInstallBundle(path, cb) }
     override fun zip(srcs: Array<String>, outZip: String, cb: IProgressCallback) = startClient(cb) { doZip(srcs, outZip, cb) }
+
+    // ---- Pasang bundle (XAPK / APKS / APKM): split APK lewat satu sesi `pm`, OBB/data disalin setelahnya
+    private val abiNames = listOf("arm64_v8a", "armeabi_v7a", "armeabi", "x86_64", "x86", "mips64", "mips")
+    private val densityDpi = mapOf("ldpi" to 120, "mdpi" to 160, "tvdpi" to 213, "hdpi" to 240,
+        "xhdpi" to 320, "xxhdpi" to 480, "xxxhdpi" to 640)
+
+    private fun token(name: String, set: Collection<String>): String? {
+        val n = name.substringAfterLast('/').lowercase().removeSuffix(".apk").replace('-', '.')
+        return n.split('.').firstOrNull { it in set }
+    }
+
+    /** Pilih split yang cocok dengan perangkat: satu ABI terbaik dan satu kepadatan layar terdekat. */
+    private fun pickSplits(apks: List<java.util.zip.ZipEntry>): List<java.util.zip.ZipEntry> {
+        var list = apks
+        try {
+            val supported = android.os.Build.SUPPORTED_ABIS.map { it.lowercase().replace('-', '_') }
+            val present = list.mapNotNull { token(it.name, abiNames) }.toSet()
+            val best = supported.firstOrNull { it in present }
+            if (best != null) list = list.filter { val t = token(it.name, abiNames); t == null || t == best }
+        } catch (_: Throwable) {}
+        try {
+            val dpi = android.content.res.Resources.getSystem().displayMetrics.densityDpi
+            val present = list.mapNotNull { token(it.name, densityDpi.keys) }.toSet()
+            val best = present.minByOrNull { Math.abs((densityDpi[it] ?: 0) - dpi) }
+            if (best != null) list = list.filter { val t = token(it.name, densityDpi.keys); t == null || t == best }
+        } catch (_: Throwable) {}
+        return list
+    }
+
+    /** Jalankan `pm` dengan stdin opsional; kembalikan (kode, keluaran). */
+    private fun runPm(args: List<String>, feed: ((java.io.OutputStream) -> Unit)? = null): Pair<Int, String> {
+        val pr = ProcessBuilder(listOf("pm") + args).redirectErrorStream(true).start()
+        var feedErr: Throwable? = null
+        val t = Thread {
+            try { pr.outputStream.use { feed?.invoke(it) } } catch (e: Throwable) { feedErr = e }
+        }
+        t.start()
+        val out = pr.inputStream.bufferedReader().readText().trim()
+        val code = pr.waitFor()
+        t.join(2000)
+        feedErr?.let { if (code == 0) throw it }
+        return code to out
+    }
+
+    private fun doInstallBundle(path: String, cb: IProgressCallback) {
+        java.util.zip.ZipFile(path).use { zf ->
+            val entries = zf.entries().toList().filter { !it.isDirectory }
+            val man = entries.firstOrNull { it.name == "manifest.json" }?.let {
+                try { JSONObject(zf.getInputStream(it).bufferedReader().readText()) } catch (_: Throwable) { null }
+            }
+            val pkg = man?.optString("package_name", "") ?: ""
+
+            // daftar APK: urutan di manifest XAPK bila ada, kalau tidak semua .apk (kecuali universal/standalone bila ada split)
+            var apks = entries.filter { it.name.endsWith(".apk", ignoreCase = true) }
+            val named = man?.optJSONArray("split_apks")?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("file") }.toSet()
+            }.orEmpty()
+            if (named.isNotEmpty() && apks.any { it.name in named }) {
+                apks = apks.filter { it.name in named }
+            } else {
+                val splits = apks.filter { it.name.startsWith("splits/") }
+                if (splits.isNotEmpty()) apks = splits
+                else apks = apks.filter { !it.name.startsWith("standalones/") && !it.name.startsWith("instant/") && !it.name.startsWith("asset-slices/") }
+                    .let { l -> if (l.size > 1) l.filter { it.name != "universal.apk" } else l }
+            }
+            apks = pickSplits(apks)
+            if (apks.isEmpty()) throw IOException("tidak ada APK di dalam ${File(path).name}")
+
+            // OBB / data: entri yang berawalan Android/
+            val extras = entries.filter {
+                it.name.startsWith("Android/obb/") || it.name.startsWith("Android/data/")
+            }
+            val total = apks.sumOf { it.size } + extras.sumOf { it.size }
+            val job = Job(cb, total)
+            log(cb, "Memasang ${File(path).name}: ${apks.size} APK" + if (extras.isNotEmpty()) ", ${extras.size} berkas OBB/data" else "")
+
+            val (c1, o1) = runPm(listOf("install-create", "-r"))
+            val sid = Regex("\\[(\\d+)]").find(o1)?.groupValues?.get(1)
+            if (c1 != 0 || sid == null) throw IOException("sesi pemasangan gagal: ${o1.lines().lastOrNull() ?: "kode $c1"}")
+            try {
+                for ((i, e) in apks.withIndex()) {
+                    if (cancelled) throw InterruptedException("cancel")
+                    val label = "${i}_" + e.name.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._-]"), "_")
+                    val (c, o) = runPm(listOf("install-write", "-S", e.size.toString(), sid, label, "-")) { os ->
+                        zf.getInputStream(e).use { ins ->
+                            while (true) {
+                                val n = ins.read(job.buf)
+                                if (n < 0) break
+                                os.write(job.buf, 0, n)
+                                job.done += n
+                                job.emit(e.name.substringAfterLast('/'))
+                                if (cancelled) throw InterruptedException("cancel")
+                            }
+                        }
+                    }
+                    if (c != 0) throw IOException("${e.name}: ${o.lines().lastOrNull() ?: "kode $c"}")
+                }
+                val (c2, o2) = runPm(listOf("install-commit", sid))
+                if (c2 != 0 || !o2.contains("Success", ignoreCase = true))
+                    throw IOException(o2.lines().lastOrNull { it.isNotBlank() } ?: "kode $c2")
+            } catch (t: Throwable) {
+                try { runPm(listOf("install-abandon", sid)) } catch (_: Throwable) {}
+                throw t
+            }
+            log(cb, "OK     APK terpasang" + if (pkg.isNotEmpty()) " ($pkg)" else "")
+
+            // OBB/data
+            val androidRoot = File("/sdcard/Android").canonicalFile
+            var copied = 0
+            for (e in extras) {
+                if (cancelled) throw InterruptedException("cancel")
+                val dst = File("/sdcard", e.name).canonicalFile
+                if (!dst.path.startsWith(androidRoot.path + "/")) { log(cb, "ERR lewati ${e.name}: path tidak aman"); continue }
+                dst.parentFile?.mkdirs()
+                zf.getInputStream(e).use { ins ->
+                    FileOutputStream(dst).use { o ->
+                        while (true) {
+                            val n = ins.read(job.buf)
+                            if (n < 0) break
+                            o.write(job.buf, 0, n)
+                            job.done += n
+                            job.emit(dst.name)
+                            if (cancelled) throw InterruptedException("cancel")
+                        }
+                    }
+                }
+                copied++
+            }
+            job.emit("", force = true)
+            finish(cb, true, "Terpasang: ${File(path).name} (${apks.size} APK" + (if (copied > 0) ", $copied OBB/data" else "") + ")", job.done, total)
+        }
+    }
 
     private fun doZip(srcs: Array<String>, outZip: String, cb: IProgressCallback) {
         val out = uniqueFile(File(outZip))

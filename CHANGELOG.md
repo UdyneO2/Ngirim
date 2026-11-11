@@ -2,6 +2,20 @@
 
 Versi terbaru di atas. Di dalam aplikasi, riwayat ini ada di Pengaturan > Riwayat perubahan.
 
+## v2.6 (11 Nov 2026)
+
+- **Pratinjau gambar** di tab Lokal: pilih satu gambar lalu ketuk Pratinjau. Ada zoom (+ / - / Pas), geser
+  untuk menggerakkan gambar saat di-zoom, dan geser kiri-kanan atau tombol < > untuk gambar lain di folder
+  yang sama. Format: JPG, PNG, WebP, GIF (frame pertama), BMP, HEIC. Gambar besar diperkecil ke maks. 2048 px
+  dan orientasi EXIF diikuti.
+- **Pasang XAPK / APKS / APKM** langsung dari file manager (butuh Shizuku). Semua split APK dipasang dalam
+  satu sesi; untuk bundle yang berisi banyak ABI dan kepadatan layar, hanya yang cocok dengan HP yang dipakai.
+  Berkas OBB/data di dalam XAPK disalin ke `Android/obb` atau `Android/data` setelah pemasangan berhasil.
+- **Multi-pilih lewat geser**: tekan di kolom kotak centang lalu geser ke atas/bawah untuk memilih (atau
+  melepas) banyak baris sekaligus; daftar menggulir sendiri di tepi. Berlaku di FTP dan juga di tab Lokal.
+  Menggeser di bagian nama tetap menggulir daftar seperti biasa.
+- Pilihan warna aksen dihapus; tampilan kembali memakai biru Windows 10.
+
 ## v2.5 (11 Nov 2026)
 
 - Transfer yang putus (Wi-Fi hilang, aplikasi ditutup, baterai habis) sekarang bisa dilanjutkan. Penerima

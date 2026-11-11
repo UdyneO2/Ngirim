@@ -433,6 +433,21 @@ const Pair kEn[] = {
     {"Transfer yang putus dilanjutkan dari byte terakhir, bukan mulai dari nol", "Interrupted transfers resume from the last byte instead of starting over"},
     {"Otomatis mencoba menyambung lagi sampai 4 kali saat koneksi terputus", "Automatically retries up to 4 times when the connection drops"},
     {"Berlaku untuk kirim, terima, dan FTP dua panel", "Works for send, receive and the two-pane FTP"},
+    {"Memasang *...", "Installing {1}..."},
+    {"Pasang * butuh Shizuku", "Installing {1} needs Shizuku"},
+    {"gagal memasang: *", "install failed: {1}"},
+    {"Memasang *: * APK", "Installing {1}: {2} APKs"},
+    {"Memasang *: * APK, * berkas OBB/data", "Installing {1}: {2} APKs, {3} OBB/data files"},
+    {"OK     APK terpasang", "OK     APK installed"},
+    {"OK     APK terpasang (*)", "OK     APK installed ({1})"},
+    {"Terpasang: * (* APK)", "Installed: {1} ({2} APKs)"},
+    {"Terpasang: * (* APK, * OBB/data)", "Installed: {1} ({2} APKs, {3} OBB/data)"},
+    {"tidak ada APK di dalam *", "no APK found inside {1}"},
+    {"sesi pemasangan gagal: *", "install session failed: {1}"},
+    {"Pratinjau", "Preview"},
+    {"Pas", "Fit"},
+    {"Memuat...", "Loading..."},
+    {"Gagal memuat gambar", "Could not load the image"},
 };
 
 struct Table { const char* code; const char* name; const Pair* pairs; size_t n; };
