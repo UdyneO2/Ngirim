@@ -448,6 +448,13 @@ const Pair kEn[] = {
     {"Pas", "Fit"},
     {"Memuat...", "Loading..."},
     {"Gagal memuat gambar", "Could not load the image"},
+    {"Buka folder", "Open folder"},
+    {"%d dipilih", "%d selected"},
+    {"Tekan sekali lagi untuk keluar", "Press back again to exit"},
+    {"Menu klik kanan dan Kembali", "Context menu and Back"},
+    {"Tekan lama file, folder, atau APK di file manager untuk membuka menu seperti klik kanan", "Long-press a file, folder or APK in the file manager to open a right-click style menu"},
+    {"Kembali: naik folder, lalu pindah ke Lokal, lalu tekan 2x untuk keluar", "Back: go up a folder, then switch to Local, then press twice to exit"},
+    {"File manager jadi halaman utama", "The file manager is now the home page"},
 };
 
 struct Table { const char* code; const char* name; const Pair* pairs; size_t n; };

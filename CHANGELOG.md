@@ -2,6 +2,16 @@
 
 Versi terbaru di atas. Di dalam aplikasi, riwayat ini ada di Pengaturan > Riwayat perubahan.
 
+## v2.7 (11 Nov 2026)
+
+- **Menu tekan-lama** di file manager, seperti klik kanan di Windows: tahan satu file, folder, atau APK
+  sekitar setengah detik, lalu muncul daftar aksi di dekat jari. Isinya mengikuti jenis item: Buka,
+  Pratinjau, Pasang, Ekstrak, Salin, Potong, Tempel, Ubah nama, Hapus, Arsipkan, Bagikan, Kirim, Properti.
+  Ponsel bergetar sebentar saat menu muncul. Bila beberapa item sudah dipilih, aksinya berlaku untuk semuanya.
+- **Tombol Kembali**: file manager kini jadi halaman utama. Kembali menutup menu atau layar tambahan, lalu
+  naik satu folder; di tab lain Kembali pindah ke Lokal. Di folder paling atas, tekan Kembali dua kali
+  untuk keluar.
+
 ## v2.6 (11 Nov 2026)
 
 - **Pratinjau gambar** di tab Lokal: pilih satu gambar lalu ketuk Pratinjau. Ada zoom (+ / - / Pas), geser

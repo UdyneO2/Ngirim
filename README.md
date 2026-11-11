@@ -4,7 +4,7 @@ Berbagi aplikasi dengan mudah. Ngirim menggabungkan pengirim file lewat Wi-Fi, F
 file manager dalam satu aplikasi Android. Akses ke `Android/data` dan `Android/obb` lewat Shizuku, jadi
 tanpa root dan tanpa SAF.
 
-Versi sekarang v2.6. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
+Versi sekarang v2.7. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
 [GitHub Releases](https://github.com/UdyneO2/Ngirim/releases).
 
 ## Fitur
@@ -26,6 +26,8 @@ FTP dua panel
 - [x] Dua folder berdampingan dengan pintasan folder dan favorit sendiri
 - [x] Panel kanan bisa diarahkan ke HP lain yang sudah dipasangkan, salin ke dua arah
 - [x] Multi-pilih lewat geser di kolom kotak centang (FTP dan Lokal)
+- [x] Menu tekan-lama seperti klik kanan (salin, tempel, arsip, pasang, dll.)
+- [x] Tombol Kembali: naik folder, 2x untuk keluar
 
 File manager (tab Lokal)
 - [x] Salin, potong, tempel, hapus (ke tempat sampah), ubah nama, folder baru, properti, cari, urutkan
@@ -168,7 +170,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v2.6 && git push origin v2.6` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v2.7 && git push origin v2.7` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.

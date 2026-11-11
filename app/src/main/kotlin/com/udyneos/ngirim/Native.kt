@@ -16,6 +16,8 @@ object Native {
     @JvmStatic external fun setUpdateMsg(msg: String)
     @JvmStatic external fun tr(s: String): String
     @JvmStatic external fun selectTab(idx: Int)
+    /** Tombol Kembali: true bila ditangani native (menu, layar tambahan, pindah ke tab Lokal). */
+    @JvmStatic external fun back(): Boolean
 
     // pratinjau gambar: buf = piksel RGBA (direct ByteBuffer) atau null bila sedang memuat / gagal (msg)
     @JvmStatic external fun setPreview(w: Int, h: Int, buf: java.nio.ByteBuffer?, name: String, idx: Int, cnt: Int, msg: String)

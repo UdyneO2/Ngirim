@@ -534,6 +534,7 @@ class MainActivity : Activity() {
             "SET" -> setPref(p[1], p[2] == "1")
             "LANG" -> { lang = (p.getOrNull(1) ?: "auto").take(8); prefs.edit().putString("lang", lang).apply(); pushSettings() }
             "SCAN_QR" -> scanQr()
+            "HAPTIC" -> runOnUiThread { glView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) }
             "PV" -> when (p.getOrNull(1)) {
                 "CLOSE" -> closePreviewNow()
                 "NEXT" -> showPreview(pvIdx + 1)
@@ -1213,6 +1214,8 @@ class MainActivity : Activity() {
     private fun isImageName(n: String) = n.substringAfterLast('.', "").lowercase() in
         setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif")
 
+    private var lastBackAt = 0L
+
     private fun closePreviewNow() {
         pvGen.incrementAndGet()
         pvPaths = emptyList()
@@ -1272,7 +1275,19 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (pvPaths.isNotEmpty()) { closePreviewNow(); return }
-        @Suppress("DEPRECATION") super.onBackPressed()
+        if (Native.back()) return
+        // Halaman utama = file manager: Kembali naik satu folder, lalu 2x Kembali untuk keluar
+        val parent = File(fmPath).parent
+        if (fmPath.trimEnd('/') !in setOf("/sdcard", "/storage/emulated/0") && parent != null && parent != "/") {
+            fmPath = parent; fmFilter = ""; fmLoad(); return
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastBackAt < 2000) {
+            @Suppress("DEPRECATION") super.onBackPressed()
+        } else {
+            lastBackAt = now
+            Toast.makeText(this, tr("Tekan sekali lagi untuk keluar"), Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun stageFiles(paths: List<String>, fail: (() -> Unit)? = null, then: (List<File>) -> Unit) {
