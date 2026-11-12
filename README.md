@@ -4,7 +4,7 @@ Berbagi aplikasi dengan mudah. Ngirim menggabungkan pengirim file lewat Wi-Fi, F
 file manager dalam satu aplikasi Android. Akses ke `Android/data` dan `Android/obb` lewat Shizuku, jadi
 tanpa root dan tanpa SAF.
 
-Versi sekarang v2.8. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
+Versi sekarang v2.9. Riwayat lengkap ada di [CHANGELOG.md](CHANGELOG.md), rilis di
 [GitHub Releases](https://github.com/UdyneO2/Ngirim/releases).
 
 ## Fitur
@@ -78,7 +78,8 @@ Untuk sekarang hanya aksara Latin, karena font bawaan antarmuka belum memuat aks
 - [Dear ImGui](https://github.com/ocornut/imgui) oleh Omar Cornut, lisensi MIT. Dipakai untuk seluruh antarmuka.
 - [Shizuku](https://github.com/RikkaApps/Shizuku) dan Shizuku-API oleh RikkaApps, lisensi Apache 2.0. Dasar akses file tanpa root.
 - [ZXing](https://github.com/zxing/zxing) dan [zxing-android-embedded](https://github.com/journeyapps/zxing-android-embedded) oleh JourneyApps, lisensi Apache 2.0. Dipakai untuk pemindai QR.
-- Font Roboto bawaan sistem Android; font monospace sistem untuk tab Log.
+- [Source Sans 3](https://github.com/adobe-fonts/source-sans) oleh Adobe, lisensi SIL Open Font License 1.1 (berkas `app/src/main/assets/fonts/LICENSE-SourceSans3.txt`). Font antarmuka, dipakai tanpa diubah.
+- Font monospace sistem Android untuk tab Log.
 - Android NSD (mDNS) untuk menemukan perangkat, GitHub Releases API untuk cek pembaruan.
 - Gaya visual terinspirasi antarmuka Windows 10.
 - Dibuat dan dirawat oleh [UdyneO2](https://github.com/UdyneO2).
@@ -179,7 +180,7 @@ Workflow `.github/workflows/release.yml` membangun APK **bertanda tangan** dan m
    base64 -w0 release.jks
    ```
 2. Tambahkan secrets repo: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
-3. Rilis: `git tag v2.8 && git push origin v2.8` (atau jalankan manual dari tab Actions).
+3. Rilis: `git tag v2.9 && git push origin v2.8` (atau jalankan manual dari tab Actions).
 
 `versionName` diambil dari nama tag, `versionCode` dari nomor run. Tag berisi `alpha`, `beta`, atau `rc`
 ditandai pre-release. Catatan rilis diambil dari bagian yang cocok di `CHANGELOG.md`.

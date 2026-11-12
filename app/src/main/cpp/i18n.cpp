@@ -462,6 +462,15 @@ const Pair kEn[] = {
     {"Tombol aksi di atas Akses cepat dihapus; semua ada di menu tekan-lama", "The action buttons above Quick access are gone; everything is in the long-press menu"},
     {"Menu lebih rapat, dan tekan lama di area kosong membuka Tempel / Folder baru", "Tighter menu, and a long-press on empty space opens Paste / New folder"},
     {"Lisensi MIT ditambahkan, lengkap dengan lisensi pustaka pihak ketiga", "MIT license added, with the licenses of third-party libraries"},
+    {"Clipboard: potong", "Clipboard: cut"},
+    {"Clipboard: salin", "Clipboard: copy"},
+    {"nyala", "on"},
+    {"mati", "off"},
+    {"Baru", "New"},
+    {"Tampilan baru", "New look"},
+    {"Seluruh tampilan didesain ulang: bilah judul biru, tab berikon, bilah status di bawah, panel berbingkai", "The whole interface was redesigned: blue title bar, icon tabs, a status bar at the bottom, framed panels"},
+    {"Font Source Sans 3 (lisensi OFL), toggle bentuk pil, kotak centang dan progress bar membulat", "Source Sans 3 font (OFL), pill-shaped toggles, rounded checkboxes and progress bars"},
+    {"Tema terang dan gelap mengikuti palet baru", "Light and dark themes follow the new palette"},
 };
 
 struct Table { const char* code; const char* name; const Pair* pairs; size_t n; };

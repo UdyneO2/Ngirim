@@ -15,6 +15,8 @@ object Native {
     @JvmStatic external fun setShizukuFailed(failed: Boolean)
     @JvmStatic external fun setUpdateMsg(msg: String)
     @JvmStatic external fun tr(s: String): String
+    /** Font antarmuka (TTF) dari assets; panggil sebelum GL dibuat. */
+    @JvmStatic external fun setFonts(regular: ByteArray?, bold: ByteArray?)
     @JvmStatic external fun selectTab(idx: Int)
     /** Tombol Kembali: true bila ditangani native (menu, layar tambahan, pindah ke tab Lokal). */
     @JvmStatic external fun back(): Boolean

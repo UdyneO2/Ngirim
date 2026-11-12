@@ -2,6 +2,18 @@
 
 Versi terbaru di atas. Di dalam aplikasi, riwayat ini ada di Pengaturan > Riwayat perubahan.
 
+## v2.9 (12 Nov 2026)
+
+- **Tampilan baru** mengikuti desain web yang diberikan: bilah judul biru (gelap di tema gelap) dengan
+  nama, versi, dan status Shizuku; tab berikon dengan garis bawah aksen (bisa digeser); bilah status di
+  bawah (path, jumlah terpilih, clipboard); panel berbingkai bersudut 4px.
+- Font **Source Sans 3** (regular dan semibold, lisensi OFL) menggantikan Roboto sistem.
+- Komponen baru: toggle bentuk pil, kotak centang dan ikon file membulat, progress bar tipis 8dp, judul
+  bagian semibold bergaris, lencana "Baru" di riwayat perubahan.
+- Palet terang dan gelap mengikuti token desain baru.
+- Belum diikutkan (ada di mock, bukan permintaan tampilan): enkripsi TLS, antrean multi-perangkat, bahasa
+  Spanyol dan Jerman.
+
 ## v2.8 (11 Nov 2026)
 
 - Tombol aksi item (Salin, Potong, Hapus, dst.) di atas Akses cepat dihapus karena semuanya sudah ada di

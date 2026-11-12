@@ -23,7 +23,7 @@
 
 namespace {
 
-constexpr const char* kVersion = "v2.8";
+constexpr const char* kVersion = "v2.9";
 
 std::string urlEncode(const std::string& in) {
     static const char* hex = "0123456789ABCDEF";
@@ -146,7 +146,9 @@ ImFont* g_mono = nullptr;
 float g_density = 1.f;
 
 // Palet tema (mirip Windows 10: aksen biru #0078D7, kontrol datar bersudut tajam)
-struct Pal { ImVec4 ok, warn, err, accent, dim, onAccent, panel, hoverRow; ImU32 text, border, boxBg; } g_pal;
+struct Pal { ImVec4 ok, warn, err, accent, dim, onAccent, panel, hoverRow, surface, bg, title; ImU32 text, border, boxBg, surfaceU, bgU; } g_pal;
+ImFont* g_bold = nullptr;                  // Source Sans 3 SemiBold (tombol, judul)
+std::vector<unsigned char> g_fontReg, g_fontBold;
 
 ImVec4 rgb(int r, int g, int b, float a = 1.f) { return ImVec4(r / 255.f, g / 255.f, b / 255.f, a); }
 
@@ -158,39 +160,40 @@ ImVec4 mixc(const ImVec4& a, const ImVec4& b, float t) {
 }
 
 void applyTheme(bool dark) {
+    // Token warna mengikuti desain baru: latar #f3f3f3, permukaan putih, garis #d0d0d0, aksen #0078d4
     ImVec4* c = ImGui::GetStyle().Colors;
     const ImVec4 accent = rgb(kAccentR, kAccentG, kAccentB);
-    ImVec4 bg, panel, text, dis, border, btn, btnH, btnA, sel, selH, frame, frameH;
+    ImVec4 bg, surface, text, muted, border, title;
     if (!dark) {
-        bg = rgb(255, 255, 255); panel = rgb(243, 243, 243); text = rgb(20, 20, 20); dis = rgb(112, 112, 112);
-        border = rgb(173, 173, 173); btn = rgb(225, 225, 225);
-        btnH = mixc(accent, rgb(255, 255, 255), 0.10f); btnA = mixc(accent, rgb(255, 255, 255), 0.22f);
-        sel = mixc(accent, rgb(255, 255, 255), 0.20f); selH = mixc(accent, rgb(255, 255, 255), 0.10f);
-        frame = rgb(255, 255, 255); frameH = mixc(accent, rgb(255, 255, 255), 0.10f);
-        g_pal.ok = rgb(16, 124, 16); g_pal.warn = rgb(196, 89, 17); g_pal.err = rgb(196, 43, 28);
+        bg = rgb(243, 243, 243); surface = rgb(255, 255, 255); text = rgb(27, 27, 27); muted = rgb(77, 77, 77);
+        border = rgb(208, 208, 208); title = accent;
+        g_pal.ok = rgb(16, 124, 16); g_pal.warn = rgb(196, 89, 17); g_pal.err = rgb(164, 38, 44);
     } else {
-        bg = rgb(31, 31, 31); panel = rgb(43, 43, 43); text = rgb(240, 240, 240); dis = rgb(160, 160, 160);
-        border = rgb(95, 95, 95); btn = rgb(51, 51, 51); btnH = rgb(65, 65, 65); btnA = rgb(80, 80, 80);
-        sel = mixc(accent, rgb(31, 31, 31), 0.55f); selH = mixc(accent, rgb(43, 43, 43), 0.20f);
-        frame = rgb(43, 43, 43); frameH = rgb(65, 65, 65);
-        g_pal.ok = rgb(108, 203, 95); g_pal.warn = rgb(252, 185, 90); g_pal.err = rgb(255, 120, 105);
+        bg = rgb(31, 31, 31); surface = rgb(43, 43, 43); text = rgb(243, 243, 243); muted = rgb(200, 200, 200);
+        border = rgb(69, 69, 69); title = rgb(20, 20, 20);
+        g_pal.ok = rgb(108, 203, 95); g_pal.warn = rgb(252, 185, 90); g_pal.err = rgb(255, 180, 171);
     }
-    g_pal.accent = accent; g_pal.dim = dis; g_pal.onAccent = rgb(255, 255, 255); g_pal.panel = panel; g_pal.hoverRow = selH;
+    const ImVec4 hover = bg;                                   // hover tombol outline = warna latar
+    const ImVec4 press = mixc(border, bg, 0.6f);
+    const ImVec4 sel = mixc(accent, bg, 0.12f), selH = mixc(accent, bg, 0.06f);
+    g_pal.accent = accent; g_pal.dim = muted; g_pal.onAccent = rgb(255, 255, 255); g_pal.panel = surface; g_pal.hoverRow = selH;
+    g_pal.surface = surface; g_pal.bg = bg; g_pal.title = title;
     g_pal.text = ImGui::ColorConvertFloat4ToU32(text); g_pal.border = ImGui::ColorConvertFloat4ToU32(border);
-    g_pal.boxBg = ImGui::ColorConvertFloat4ToU32(frame);
+    g_pal.boxBg = ImGui::ColorConvertFloat4ToU32(surface);
+    g_pal.surfaceU = ImGui::ColorConvertFloat4ToU32(surface); g_pal.bgU = ImGui::ColorConvertFloat4ToU32(bg);
 
-    c[ImGuiCol_Text] = text; c[ImGuiCol_TextDisabled] = dis;
-    c[ImGuiCol_WindowBg] = bg; c[ImGuiCol_ChildBg] = bg; c[ImGuiCol_PopupBg] = bg;
+    c[ImGuiCol_Text] = text; c[ImGuiCol_TextDisabled] = muted;
+    c[ImGuiCol_WindowBg] = bg; c[ImGuiCol_ChildBg] = bg; c[ImGuiCol_PopupBg] = surface;
     c[ImGuiCol_Border] = border; c[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_FrameBg] = frame; c[ImGuiCol_FrameBgHovered] = frameH; c[ImGuiCol_FrameBgActive] = btnA;
+    c[ImGuiCol_FrameBg] = surface; c[ImGuiCol_FrameBgHovered] = hover; c[ImGuiCol_FrameBgActive] = press;
     c[ImGuiCol_CheckMark] = accent;
-    c[ImGuiCol_Button] = btn; c[ImGuiCol_ButtonHovered] = btnH; c[ImGuiCol_ButtonActive] = btnA;
+    c[ImGuiCol_Button] = surface; c[ImGuiCol_ButtonHovered] = hover; c[ImGuiCol_ButtonActive] = press;
     c[ImGuiCol_Header] = sel; c[ImGuiCol_HeaderHovered] = selH; c[ImGuiCol_HeaderActive] = sel;
     c[ImGuiCol_Separator] = border; c[ImGuiCol_SeparatorHovered] = accent; c[ImGuiCol_SeparatorActive] = accent;
-    c[ImGuiCol_Tab] = panel; c[ImGuiCol_TabHovered] = selH; c[ImGuiCol_TabSelected] = bg;
-    c[ImGuiCol_TabSelectedOverline] = accent; c[ImGuiCol_TabDimmed] = panel; c[ImGuiCol_TabDimmedSelected] = bg;
+    c[ImGuiCol_Tab] = surface; c[ImGuiCol_TabHovered] = selH; c[ImGuiCol_TabSelected] = surface;
+    c[ImGuiCol_TabSelectedOverline] = accent; c[ImGuiCol_TabDimmed] = surface; c[ImGuiCol_TabDimmedSelected] = surface;
     c[ImGuiCol_TabDimmedSelectedOverline] = accent;
-    c[ImGuiCol_PlotHistogram] = rgb(6, 176, 37);
+    c[ImGuiCol_PlotHistogram] = accent; c[ImGuiCol_PlotLines] = accent;
     c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0); c[ImGuiCol_ScrollbarGrab] = border;
     c[ImGuiCol_TextSelectedBg] = sel;
 }
@@ -260,6 +263,10 @@ const std::vector<Rilis> kRilis = {
      {"Tombol aksi di atas Akses cepat dihapus; semua ada di menu tekan-lama",
       "Menu lebih rapat, dan tekan lama di area kosong membuka Tempel / Folder baru",
       "Lisensi MIT ditambahkan, lengkap dengan lisensi pustaka pihak ketiga"}},
+    {"v2.9", "Tampilan baru", "12 Nov 2026",
+     {"Seluruh tampilan didesain ulang: bilah judul biru, tab berikon, bilah status di bawah, panel berbingkai",
+      "Font Source Sans 3 (lisensi OFL), toggle bentuk pil, kotak centang dan progress bar membulat",
+      "Tema terang dan gelap mengikuti palet baru"}}
 };
 
 const std::vector<const char*> kBatasan = {
@@ -368,7 +375,16 @@ void progressBlock(bool busy, long long done, long long total, double speed, con
     const float d = g_density;
     if (!(busy || total > 0)) return;
     float pct = total > 0 ? (float)((double)done / (double)total) : 0.f;
-    ImGui::ProgressBar(pct, ImVec2(-FLT_MIN, 26.f * d));
+    {
+        const float bh = 8.f * d;
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        const float w = ImGui::GetContentRegionAvail().x;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + bh), g_pal.border, bh * 0.5f);
+        if (pct > 0.f) dl->AddRectFilled(p, ImVec2(p.x + std::max(bh, w * std::min(1.f, pct)), p.y + bh),
+                                         ImGui::ColorConvertFloat4ToU32(g_pal.accent), bh * 0.5f);
+        ImGui::Dummy(ImVec2(w, bh + 6.f * d));
+    }
     ImGui::TextWrapped("%s", i18n::tr(cur).c_str());
     double eta = speed > 1 ? (double)(total - done) / speed : -1;
     ImGui::Text("%s / %s | %s/s | ETA %s", fmtSize((double)done).c_str(), fmtSize((double)total).c_str(),
@@ -400,23 +416,49 @@ void drawTerminal(const char* id, float h) {
 // Saklar ON/OFF; true saat diketuk.
 bool toggleSwitch(const char* id, bool on) {
     const float d = g_density;
-    const float h = 28.f * d, w = 54.f * d;
+    const float h = 24.f * d, w = 44.f * d;
     ImVec2 p = ImGui::GetCursorScreenPos();
-    bool clicked = ImGui::InvisibleButton(id, ImVec2(w, h));
+    bool clicked = ImGui::InvisibleButton(id, ImVec2(w, std::max(h, 32.f * d)));
+    p.y += (std::max(h, 32.f * d) - h) * 0.5f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 offBorder = g_pal.border;
     if (on) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::ColorConvertFloat4ToU32(g_pal.accent), h * 0.5f);
-    else dl->AddRect(p, ImVec2(p.x + w, p.y + h), offBorder, h * 0.5f, 0, 2.f * d);
-    dl->AddCircleFilled(ImVec2(on ? p.x + w - h * 0.5f : p.x + h * 0.5f, p.y + h * 0.5f), h * 0.5f - 6.f * d,
+    else {
+        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), g_pal.boxBg, h * 0.5f);
+        dl->AddRect(p, ImVec2(p.x + w, p.y + h), g_pal.border, h * 0.5f, 0, 1.5f * d);
+    }
+    const float kr = h * 0.5f - 4.f * d;
+    dl->AddCircleFilled(ImVec2(on ? p.x + w - h * 0.5f : p.x + h * 0.5f, p.y + h * 0.5f), kr,
                         on ? IM_COL32(255, 255, 255, 255) : g_pal.text);
     return clicked;
+}
+
+// Judul bagian: semibold, garis tipis di bawahnya
+void Heading(const char* text) {
+    const float d = g_density;
+    ImGui::Dummy(ImVec2(0, 4.f * d));
+    if (g_bold) ImGui::PushFont(g_bold);
+    ImGui::TextUnformatted(text, ImGui::FindRenderedTextEnd(text));
+    if (g_bold) ImGui::PopFont();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y + 1.f), ImVec2(p.x + ImGui::GetContentRegionAvail().x, p.y + 1.f), g_pal.border);
+    ImGui::Dummy(ImVec2(0, 5.f * d));
+}
+
+// Tombol berhuruf semibold (seperti desain baru)
+bool Btn(const char* label, ImVec2 size = ImVec2(0, 0)) {
+    if (g_bold) ImGui::PushFont(g_bold);
+    const bool r = ImGui::Button(label, size);
+    if (g_bold) ImGui::PopFont();
+    return r;
 }
 
 // Tombol yang pindah baris bila tidak muat. `first` = tombol pertama di baris.
 bool wrapButton(const std::string& label, bool& first, bool highlight = false) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     const ImGuiStyle& st = ImGui::GetStyle();
+    if (g_bold) ImGui::PushFont(g_bold);
     float bw = ImGui::CalcTextSize(label.c_str(), nullptr, true).x + st.FramePadding.x * 2.f;
+    if (g_bold) ImGui::PopFont();
     if (!first) {
         float nextX2 = ImGui::GetItemRectMax().x + st.ItemSpacing.x + bw;
         if (nextX2 < w->WorkRect.Max.x) ImGui::SameLine();
@@ -424,10 +466,13 @@ bool wrapButton(const std::string& label, bool& first, bool highlight = false) {
     first = false;
     if (highlight) {
         ImGui::PushStyleColor(ImGuiCol_Button, g_pal.accent);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, mixc(g_pal.accent, ImVec4(0, 0, 0, 1), 0.88f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, mixc(g_pal.accent, ImVec4(0, 0, 0, 1), 0.76f));
+        ImGui::PushStyleColor(ImGuiCol_Border, g_pal.accent);
         ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
     }
-    bool r = ImGui::Button(label.c_str());
-    if (highlight) ImGui::PopStyleColor(2);
+    bool r = Btn(label.c_str());
+    if (highlight) ImGui::PopStyleColor(5);
     return r;
 }
 
@@ -454,11 +499,11 @@ std::string lowerExt(const std::string& n) {
 
 // Ikon folder (kuning) dan file (kertas dengan pita warna menurut jenis)
 void drawEntryIcon(ImDrawList* dl, ImVec2 p, float s, bool dir, const std::string& name) {
+    const float r = s * 0.12f;
     if (dir) {
-        const ImU32 body = IM_COL32(255, 208, 91, 255), back = IM_COL32(230, 168, 30, 255);
-        dl->AddRectFilled(ImVec2(p.x, p.y + s * 0.12f), ImVec2(p.x + s * 0.45f, p.y + s * 0.32f), back);
-        dl->AddRectFilled(ImVec2(p.x, p.y + s * 0.26f), ImVec2(p.x + s, p.y + s * 0.88f), body);
-        dl->AddRectFilled(ImVec2(p.x, p.y + s * 0.26f), ImVec2(p.x + s, p.y + s * 0.34f), back);
+        const ImU32 body = IM_COL32(255, 200, 70, 255), back = IM_COL32(232, 160, 20, 255);
+        dl->AddRectFilled(ImVec2(p.x, p.y + s * 0.1f), ImVec2(p.x + s * 0.48f, p.y + s * 0.4f), back, r);
+        dl->AddRectFilled(ImVec2(p.x, p.y + s * 0.26f), ImVec2(p.x + s, p.y + s * 0.88f), body, r);
         return;
     }
     const std::string e = lowerExt(name);
@@ -470,23 +515,23 @@ void drawEntryIcon(ImDrawList* dl, ImVec2 p, float s, bool dir, const std::strin
     else if (e == "zip" || e == "rar" || e == "7z" || e == "tar" || e == "gz" || e == "obb") band = IM_COL32(255, 152, 0, 255);
     else if (e == "pdf") band = IM_COL32(229, 57, 53, 255);
     const float x0 = p.x + s * 0.16f, x1 = p.x + s * 0.84f, y0 = p.y, y1 = p.y + s, f = s * 0.24f;
-    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(250, 250, 250, 255));
-    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(150, 150, 150, 255));
-    dl->AddTriangleFilled(ImVec2(x1 - f, y0), ImVec2(x1, y0 + f), ImVec2(x1 - f, y0 + f), IM_COL32(205, 205, 205, 255));
-    dl->AddRectFilled(ImVec2(x0 + s * 0.08f, y1 - s * 0.3f), ImVec2(x1 - s * 0.08f, y1 - s * 0.1f), band);
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(250, 250, 250, 255), r);
+    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(150, 150, 150, 255), r);
+    dl->AddTriangleFilled(ImVec2(x1 - f, y0 + 1), ImVec2(x1 - 1, y0 + f), ImVec2(x1 - f, y0 + f), IM_COL32(205, 205, 205, 255));
+    dl->AddRectFilled(ImVec2(x0 + s * 0.1f, y1 - s * 0.3f), ImVec2(x1 - s * 0.1f, y1 - s * 0.12f), band, s * 0.06f);
 }
 
 // Kotak centang digambar manual agar bisa rata tengah pada baris tinggi.
 void drawCheck(ImDrawList* dl, ImVec2 c, float s, bool on) {
     ImVec2 a(c.x - s * 0.5f, c.y - s * 0.5f), b(c.x + s * 0.5f, c.y + s * 0.5f);
     if (on) {
-        dl->AddRectFilled(a, b, ImGui::ColorConvertFloat4ToU32(g_pal.accent));
+        dl->AddRectFilled(a, b, ImGui::ColorConvertFloat4ToU32(g_pal.accent), 4.f * g_density);
         const float t = s * 0.14f;
         ImVec2 pts[3] = {ImVec2(c.x - s * 0.26f, c.y), ImVec2(c.x - s * 0.06f, c.y + s * 0.22f), ImVec2(c.x + s * 0.28f, c.y - s * 0.2f)};
         dl->AddPolyline(pts, 3, IM_COL32(255, 255, 255, 255), 0, t);
     } else {
-        dl->AddRectFilled(a, b, g_pal.boxBg);
-        dl->AddRect(a, b, g_pal.border, 0, 0, 1.5f * g_density);
+        dl->AddRectFilled(a, b, g_pal.boxBg, 4.f * g_density);
+        dl->AddRect(a, b, g_pal.border, 4.f * g_density, 0, 1.5f * g_density);
     }
 }
 
@@ -604,7 +649,7 @@ template <class T> std::string idxSel(const std::vector<T>& v) {
 // Panel berlatar abu-abu (area "ribbon" ala Explorer) dengan tinggi mengikuti isi.
 void beginPanel(const char* id) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.panel);
-    ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+    ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar);
 }
 void endPanel() { ImGui::EndChild(); ImGui::PopStyleColor(); }
@@ -798,7 +843,7 @@ void drawFiles() {
 
     // daftar
     const bool prog = S.mBusy || S.mTotal > 0;
-    float footer = (prog ? 215.f : 92.f) * d;
+    float footer = (prog ? 160.f : 12.f) * d;
     float h = ImGui::GetContentRegionAvail().y - footer;
     if (h < 150.f * d) h = 150.f * d;
     ImGui::BeginChild("fm_list", ImVec2(0, h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
@@ -852,13 +897,8 @@ void drawFiles() {
     ImGui::EndChild();
     fmContextMenu(busy);
 
-    // bilah status
-    ImGui::PushStyleColor(ImGuiCol_Text, g_pal.dim);
-    ImGui::TextWrapped(T("%d item | %d dipilih (%s)%s"), (int)S.fm.size(), nSel, fmtSize((double)sizeSel(S.fm)).c_str(),
-                       S.clipCount ? (S.clipCut ? T(" | Clipboard: potong") : T(" | Clipboard: salin")) : "");
-    ImGui::PopStyleColor();
     if (S.mBusy) {
-        if (ImGui::Button(T("BATALKAN##fm"), ImVec2(-FLT_MIN, 44.f * d))) act("CANCEL");
+        if (Btn(T("BATALKAN##fm"), ImVec2(-FLT_MIN, 44.f * d))) act("CANCEL");
     }
     progressBlock(S.mBusy, S.mDone, S.mTotal, S.mSpeed, S.mCur);
 }
@@ -922,7 +962,7 @@ void drawApk() {
         std::string l = lb;
         ImGui::PushStyleColor(ImGuiCol_Button, g_pal.accent);
         ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
-        bool go = ImGui::Button(l.c_str(), ImVec2(-FLT_MIN, 54.f * d));
+        bool go = Btn(l.c_str(), ImVec2(-FLT_MIN, 54.f * d));
         ImGui::PopStyleColor(2);
         if (go) {
             act("APK_GO|" + std::to_string(S.apkFmt) + "|" + std::to_string((S.apkObb ? 1 : 0) | (S.apkData ? 2 : 0)) + "|" + idxSel(S.apps));
@@ -930,7 +970,7 @@ void drawApk() {
         }
         ImGui::EndDisabled();
     } else {
-        if (ImGui::Button(T("BATALKAN##apk"), ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
+        if (Btn(T("BATALKAN##apk"), ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
     }
     progressBlock(S.aBusy, S.aDone, S.aTotal, S.aSpeed, S.aCur);
 }
@@ -949,20 +989,20 @@ void drawNet() {
         ImGui::TextColored(S.permOk ? ok : warn, "%s", shown.c_str());
     }
     if (!S.permOk) {
-        if (ImGui::Button(T("Berikan izin / periksa ulang"), ImVec2(-FLT_MIN, 52.f * d))) act("NET_PERM");
+        if (Btn(T("Berikan izin / periksa ulang"), ImVec2(-FLT_MIN, 52.f * d))) act("NET_PERM");
     }
     if (!S.shizuku) ImGui::TextDisabled("%s", T("Shizuku harus terhubung dulu."));
     ImGui::BeginDisabled(!(S.permOk && S.shizuku));
 
     // ---- Terima (receiver)
-    ImGui::SeparatorText(T("Terima"));
+    Heading(T("Terima"));
     if (toggleSwitch("##rx", S.listening)) act(S.listening ? "RX_OFF" : "RX_ON");
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(S.listening ? ok : g_pal.dim, "%s", S.listening ? T("Terima AKTIF - terlihat oleh perangkat lain") : T("Terima MATI"));
     ImGui::TextWrapped(T("Folder simpan: %s"), S.recvDir.empty() ? T("(belum dipilih)") : S.recvDir.c_str());
     ImGui::BeginDisabled(S.listening);
-    if (ImGui::Button(T("Ubah folder simpan"))) act("BPURPOSE|2");
+    if (Btn(T("Ubah folder simpan"))) act("BPURPOSE|2");
     ImGui::EndDisabled();
     if (toggleSwitch("##bro", S.allowBrowse)) {
         S.allowBrowse = !S.allowBrowse;
@@ -980,7 +1020,7 @@ void drawNet() {
         ImGui::SetWindowFontScale(1.f);
         // QR pairing: dipindai aplikasi kamera/pemindai apa pun, lalu membuka Ngirim di perangkat pengirim
         static bool showQr = false;
-        if (ImGui::Button(showQr ? T("Sembunyikan QR##qr") : T("Tampilkan QR##qr"))) showQr = !showQr;
+        if (Btn(showQr ? T("Sembunyikan QR##qr") : T("Tampilkan QR##qr"))) showQr = !showQr;
         if (showQr) {
             const size_t c = S.addr.rfind(':');
             if (c != std::string::npos) {
@@ -1017,12 +1057,12 @@ void drawNet() {
     }
 
     // ---- Perangkat aktif
-    ImGui::SeparatorText(T("Perangkat aktif"));
-    if (ImGui::Button(T("Segarkan"))) act("NET_SCAN");
+    Heading(T("Perangkat aktif"));
+    if (Btn(T("Segarkan"))) act("NET_SCAN");
     ImGui::SameLine();
-    if (ImGui::Button(T("IP manual"))) act("NET_MANUAL");
+    if (Btn(T("IP manual"))) act("NET_MANUAL");
     ImGui::SameLine();
-    if (ImGui::Button(T("Pindai QR"))) act("SCAN_QR");
+    if (Btn(T("Pindai QR"))) act("SCAN_QR");
     if (S.peers.empty()) ImGui::TextDisabled("%s", T("Belum ada. Nyalakan Terima di perangkat lain (satu Wi-Fi)."));
     else { ImGui::PushStyleColor(ImGuiCol_Text, g_pal.dim); ImGui::TextWrapped("%s", T("Ketuk perangkat, lalu masukkan PIN dari layarnya.")); ImGui::PopStyleColor(); }
     for (int i = 0; i < (int)S.peers.size(); i++) {
@@ -1037,17 +1077,17 @@ void drawNet() {
 
     // ---- Terhubung
     if (!S.pairedName.empty()) {
-        ImGui::SeparatorText(T("Terhubung"));
+        Heading(T("Terhubung"));
         ImGui::TextColored(ok, "%s", S.pairedName.c_str());
         ImGui::SameLine();
         ImGui::BeginDisabled(S.netBusy);
-        if (ImGui::Button(T("Putus"))) act("NET_DISCONNECT");
+        if (Btn(T("Putus"))) act("NET_DISCONNECT");
         ImGui::EndDisabled();
         ImGui::TextDisabled("%s", T("Jelajah dan salin dua arah ada di tab FTP."));
         ImGui::BeginDisabled(S.netBusy);
-        if (ImGui::Button("+ File / folder")) act("BPURPOSE|1");
+        if (Btn("+ File / folder")) act("BPURPOSE|1");
         ImGui::SameLine();
-        if (ImGui::Button(T("Kosongkan"))) { S.sendList.clear(); act("NET_CLEAR"); }
+        if (Btn(T("Kosongkan"))) { S.sendList.clear(); act("NET_CLEAR"); }
         ImGui::EndDisabled();
         if (S.sendList.empty()) ImGui::TextDisabled("%s", T("Belum ada file/folder dipilih."));
         const int kShow = 6;
@@ -1057,14 +1097,14 @@ void drawNet() {
             ImGui::BeginDisabled(S.sendList.empty());
             ImGui::PushStyleColor(ImGuiCol_Button, acc);
             ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
-            if (ImGui::Button(T("KIRIM SEKARANG"), ImVec2(-FLT_MIN, 56.f * d))) {
+            if (Btn(T("KIRIM SEKARANG"), ImVec2(-FLT_MIN, 56.f * d))) {
                 act("NET_SEND");
                 S.netBusy = true; S.netDone = 0; S.netTotal = 0; S.netSpeed = 0; S.netCur = "Menyiapkan...";
             }
             ImGui::PopStyleColor(2);
             ImGui::EndDisabled();
         } else {
-            if (ImGui::Button(T("BATALKAN"), ImVec2(-FLT_MIN, 56.f * d))) act("NET_CANCEL");
+            if (Btn(T("BATALKAN"), ImVec2(-FLT_MIN, 56.f * d))) act("NET_CANCEL");
         }
     }
     ImGui::EndDisabled();
@@ -1072,7 +1112,7 @@ void drawNet() {
     progressBlock(S.netBusy, S.netDone, S.netTotal, S.netSpeed, S.netCur);
 
     // log terakhir (selengkapnya di tab Log)
-    ImGui::SeparatorText(T("Log terakhir"));
+    Heading(T("Log terakhir"));
     if (g_mono) ImGui::PushFont(g_mono);
     size_t from = S.logs.size() > 5 ? S.logs.size() - 5 : 0;
     for (size_t i = from; i < S.logs.size(); i++) ImGui::TextWrapped("%.11s%s", S.logs[i].c_str(), i18n::tr(S.logs[i].size() > 11 ? S.logs[i].c_str() + 11 : "").c_str());
@@ -1180,20 +1220,20 @@ void drawFtp() {
     if (!S.fBusy) {
         const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
         ImGui::BeginDisabled(!S.shizuku || nL == 0);
-        if (ImGui::Button(T("Kiri  >>  Kanan"), ImVec2(bw, 50.f * d))) {
+        if (Btn(T("Kiri  >>  Kanan"), ImVec2(bw, 50.f * d))) {
             act("FP_XFER|0|" + std::to_string(S.fMove) + "|" + idxSel(S.pane[0].e));
             S.fBusy = true; S.fDone = 0; S.fTotal = 0; S.fSpeed = 0; S.fCur = "Menyiapkan...";
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!S.shizuku || nR == 0);
-        if (ImGui::Button(T("Kiri  <<  Kanan"), ImVec2(-FLT_MIN, 50.f * d))) {
+        if (Btn(T("Kiri  <<  Kanan"), ImVec2(-FLT_MIN, 50.f * d))) {
             act("FP_XFER|1|" + std::to_string(S.fMove) + "|" + idxSel(S.pane[1].e));
             S.fBusy = true; S.fDone = 0; S.fTotal = 0; S.fSpeed = 0; S.fCur = "Menyiapkan...";
         }
         ImGui::EndDisabled();
     } else {
-        if (ImGui::Button(T("BATALKAN##ftp"), ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
+        if (Btn(T("BATALKAN##ftp"), ImVec2(-FLT_MIN, 54.f * d))) act("CANCEL");
     }
     progressBlock(S.fBusy, S.fDone, S.fTotal, S.fSpeed, S.fCur);
 }
@@ -1218,14 +1258,14 @@ void settingToggle(const char* id, const char* label, const char* sub, bool on, 
 void drawSettings() {
     const float d = g_density;
 
-    ImGui::SeparatorText(T("Tampilan"));
+    Heading(T("Tampilan"));
     {
         bool first = true;
         if (wrapButton(T("Terang##th"), first, !S.dark)) { S.dark = false; applyTheme(false); act("SET|theme|0"); }
         if (wrapButton(T("Gelap##th"), first, S.dark)) { S.dark = true; applyTheme(true); act("SET|theme|1"); }
     }
 
-    ImGui::SeparatorText(T("Bahasa"));
+    Heading(T("Bahasa"));
     {
         bool first = true;
         if (wrapButton(std::string(T("Otomatis")) + "##lg", first, S.langPref == "auto")) { S.langPref = "auto"; i18n::setLanguage("auto", S.sysLang); act("LANG|auto"); }
@@ -1238,15 +1278,15 @@ void drawSettings() {
         if (S.langPref == "auto") dimWrapped(T("Otomatis: ikuti bahasa sistem, selain Indonesia memakai Inggris."));
     }
 
-    ImGui::SeparatorText("File manager");
+    Heading("File manager");
     settingToggle("##hid", T("Tampilkan file tersembunyi"), T("Nama berawalan titik (.)"), S.showHidden, "hidden");
     ImGui::Spacing();
     settingToggle("##trash", T("Gunakan tempat sampah"), T("Hapus memindahkan ke /sdcard/Ngirim/.Sampah (Android/data dan OBB dihapus permanen)"), S.useTrash, "trash");
-    if (ImGui::Button(T("Buka tempat sampah"))) act("TRASH_OPEN");
+    if (Btn(T("Buka tempat sampah"))) act("TRASH_OPEN");
     ImGui::SameLine();
-    if (ImGui::Button(T("Kosongkan sampah"))) act("TRASH_EMPTY");
+    if (Btn(T("Kosongkan sampah"))) act("TRASH_EMPTY");
 
-    ImGui::SeparatorText(T("Pasang APK"));
+    Heading(T("Pasang APK"));
     {
         bool first = true;
         if (wrapButton(T("Installer sistem##inst"), first, !S.instShizuku)) { S.instShizuku = false; act("SET|inst|0"); }
@@ -1255,23 +1295,23 @@ void drawSettings() {
                                  : T("Memakai installer Android; perlu izin 'pasang aplikasi tak dikenal'."));
     }
 
-    ImGui::SeparatorText(T("Pembaruan"));
+    Heading(T("Pembaruan"));
     ImGui::Text(T("Versi terpasang: %s"), kVersion);
     settingToggle("##autoupd", T("Cek pembaruan saat dibuka"), T("Mengambil rilis terbaru dari GitHub"), S.autoUpdate, "autoupd");
-    if (ImGui::Button(T("Cek pembaruan"))) act("UPD_CHECK");
+    if (Btn(T("Cek pembaruan"))) act("UPD_CHECK");
     if (!S.updMsg.empty()) dimWrapped(i18n::tr(S.updMsg).c_str());
     dimWrapped(T("Pembaruan dipasang lewat Shizuku bila terhubung, kalau tidak lewat installer sistem."));
 
-    ImGui::SeparatorText("Backup APK");
+    Heading("Backup APK");
     ImGui::TextWrapped(T("Folder hasil: %s"), S.xapkDir.c_str());
-    if (ImGui::Button(T("Ubah folder hasil"))) act("BPURPOSE|5");
+    if (Btn(T("Ubah folder hasil"))) act("BPURPOSE|5");
 
-    ImGui::SeparatorText(T("Jaringan"));
+    Heading(T("Jaringan"));
     ImGui::TextWrapped(T("Nama perangkat: %s"), S.devName.c_str());
-    if (ImGui::Button(T("Ubah nama perangkat"))) act("SET_NAME");
+    if (Btn(T("Ubah nama perangkat"))) act("SET_NAME");
     dimWrapped(T("Nama baru dipakai saat Terima dinyalakan ulang."));
 
-    ImGui::SeparatorText("Shizuku");
+    Heading("Shizuku");
     ImGui::TextColored(S.shizuku ? g_pal.ok : g_pal.err, "%s", i18n::tr(S.shizukuMsg).c_str());
     {
         bool first = true;
@@ -1281,7 +1321,7 @@ void drawSettings() {
         if (S.shizukuFailed) dimWrapped(T("Legacy: tanpa UserService, perintah dijalankan lewat Shizuku.Process."));
     }
 
-    ImGui::SeparatorText(T("Tentang"));
+    Heading(T("Tentang"));
     ImGui::SetWindowFontScale(1.3f);
     ImGui::TextColored(g_pal.accent, "%s", T("Ngirim: Berbagi aplikasi dengan mudah"));
     ImGui::SetWindowFontScale(1.f);
@@ -1300,6 +1340,7 @@ void drawSettings() {
         ImGui::TextWrapped("Dear ImGui - MIT License (Omar Cornut)");
         ImGui::TextWrapped("Shizuku, Shizuku-API - Apache License 2.0 (RikkaApps)");
         ImGui::TextWrapped("ZXing, zxing-android-embedded - Apache License 2.0");
+        ImGui::TextWrapped("Source Sans 3 (Adobe) - SIL Open Font License 1.1");
         dimWrapped(T("Teks lengkap ada di berkas LICENSE di repositori."));
         ImGui::SetWindowFontScale(1.f);
         ImGui::TreePop();
@@ -1315,6 +1356,15 @@ void drawSettings() {
             ImGui::SetWindowFontScale(0.92f);
             for (const Rilis& r : kRilis) {
                 ImGui::TextColored(g_pal.accent, "%s  -  %s", r.ver, T(r.judul));
+                if (&r == &kRilis.back()) {
+                    ImGui::SameLine();
+                    const char* bt = T("Baru");
+                    const ImVec2 ts = ImGui::CalcTextSize(bt), p = ImGui::GetCursorScreenPos();
+                    const float px = 6.f * d;
+                    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y), ImVec2(p.x + ts.x + px * 2, p.y + ts.y), ImGui::ColorConvertFloat4ToU32(g_pal.accent), ts.y * 0.5f);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + px, p.y), IM_COL32(255, 255, 255, 255), bt);
+                    ImGui::Dummy(ImVec2(ts.x + px * 2, ts.y));
+                }
                 ImGui::TextColored(g_pal.dim, "%s", T(r.info));
                 for (const char* it : r.butir) ImGui::TextWrapped("+ %s", T(it));
                 ImGui::Spacing();
@@ -1373,10 +1423,10 @@ void drawBrowser() {
         snprintf(lb, sizeof lb, T("Tambahkan %d item"), n);
         std::string l = lb;
         ImGui::BeginDisabled(n == 0);
-        if (ImGui::Button(l.c_str(), ImVec2(-FLT_MIN, 56.f * d))) act("BFILES|" + idxSel(S.bEntries));
+        if (Btn(l.c_str(), ImVec2(-FLT_MIN, 56.f * d))) act("BFILES|" + idxSel(S.bEntries));
         ImGui::EndDisabled();
     } else {
-        if (ImGui::Button(T("PILIH FOLDER INI"), ImVec2(-FLT_MIN, 56.f * d))) act("BDIR");
+        if (Btn(T("PILIH FOLDER INI"), ImVec2(-FLT_MIN, 56.f * d))) act("BDIR");
     }
 }
 
@@ -1454,32 +1504,158 @@ void drawPreview() {
     ImGui::EndChild();
 }
 
+// ------------------------------------------------------------------ ikon garis (gaya Lucide, grid 24)
+enum Icon { IC_FOLDER, IC_WIFI, IC_PHONE, IC_GEAR, IC_LOG };
+
+void drawIcon(ImDrawList* dl, Icon ic, ImVec2 c, float size, ImU32 col) {
+    const float u = size / 24.f, th = std::max(1.4f, 1.7f * u);
+    const ImVec2 o(c.x - size * 0.5f, c.y - size * 0.5f);
+    auto P = [&](float x, float y) { return ImVec2(o.x + x * u, o.y + y * u); };
+    switch (ic) {
+        case IC_FOLDER: {
+            dl->AddRect(P(3, 7.5f), P(21, 19.5f), col, 2.f * u, 0, th);
+            ImVec2 t[5] = {P(3, 7.5f), P(3, 5.5f), P(4.5f, 4.5f), P(9, 4.5f), P(11, 7.5f)};
+            dl->AddPolyline(t, 5, col, 0, th);
+            break;
+        }
+        case IC_WIFI: {
+            const ImVec2 ctr = P(12, 19.f);
+            for (float r : {4.5f, 9.f, 13.5f}) {
+                dl->PathArcTo(ctr, r * u, -2.356f, -0.785f, 16);
+                dl->PathStroke(col, 0, th);
+            }
+            dl->AddCircleFilled(ctr, 1.4f * u, col);
+            break;
+        }
+        case IC_PHONE:
+            dl->AddRect(P(7, 2.5f), P(17, 21.5f), col, 2.5f * u, 0, th);
+            dl->AddCircleFilled(P(12, 18.3f), 1.1f * u, col);
+            break;
+        case IC_GEAR: {
+            dl->AddCircle(P(12, 12), 3.2f * u, col, 20, th);
+            dl->AddCircle(P(12, 12), 7.f * u, col, 24, th);
+            for (int i = 0; i < 8; i++) {
+                const float ang = i * 0.7854f;
+                dl->AddLine(P(12 + 7.f * cosf(ang), 12 + 7.f * sinf(ang)), P(12 + 10.2f * cosf(ang), 12 + 10.2f * sinf(ang)), col, th * 1.2f);
+            }
+            break;
+        }
+        case IC_LOG:
+            dl->AddRect(P(5, 3), P(19, 21), col, 2.f * u, 0, th);
+            dl->AddLine(P(8.5f, 8), P(15.5f, 8), col, th);
+            dl->AddLine(P(8.5f, 12), P(15.5f, 12), col, th);
+            dl->AddLine(P(8.5f, 16), P(13, 16), col, th);
+            break;
+    }
+}
+
+// Bilah tab datar: ikon + label, garis bawah aksen pada tab aktif. Bisa digeser mendatar bila tak muat.
+void drawTabBar(float y, float h) {
+    const float d = g_density;
+    const ImGuiIO& io = ImGui::GetIO();
+    const float W = io.DisplaySize.x;
+    struct Tab { const char* label; Icon icon; };
+    const Tab tabs[] = {{T("Lokal"), IC_FOLDER}, {"Wi-Fi", IC_WIFI}, {"FTP", IC_PHONE}, {T("Pengaturan"), IC_GEAR}, {"Log", IC_LOG}};
+    const int n = 5;
+    const float padX = 16.f * d, icon = 18.f * d, gap = 8.f * d;
+    float widths[5], total = 0;
+    if (g_bold) ImGui::PushFont(g_bold);
+    for (int i = 0; i < n; i++) { widths[i] = padX * 2 + icon + gap + ImGui::CalcTextSize(tabs[i].label).x; total += widths[i]; }
+    if (g_bold) ImGui::PopFont();
+
+    static float scroll = 0.f;
+    static bool dragStart = false;
+    const float maxScroll = std::max(0.f, total - W);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 base(0, y);
+    dl->AddRectFilled(base, ImVec2(W, y + h), g_pal.surfaceU);
+    dl->AddLine(ImVec2(0, y + h - 0.5f), ImVec2(W, y + h - 0.5f), g_pal.border);
+
+    const bool inStrip = io.MousePos.y >= y && io.MousePos.y < y + h;
+    if (ImGui::IsMouseClicked(0)) dragStart = inStrip;
+    if (!io.MouseDown[0]) dragStart = false;
+    if (dragStart && ImGui::IsMouseDragging(0, 8.f * d)) {
+        scroll -= io.MouseDelta.x;
+        ImGui::ClearActiveID();
+    }
+    scroll = std::max(0.f, std::min(scroll, maxScroll));
+
+    dl->PushClipRect(base, ImVec2(W, y + h), true);
+    float x = -scroll;
+    for (int i = 0; i < n; i++) {
+        const bool on = S.curTab == i;
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        ImGui::PushID(i);
+        if (ImGui::InvisibleButton("##tab", ImVec2(widths[i], h)) && !(dragStart && ImGui::IsMouseDragging(0, 8.f * d)) &&
+            fabsf(io.MouseClickedPos[0].x - io.MousePos.x) < 8.f * d) {
+            S.tabReq = i;
+        }
+        ImGui::PopID();
+        const ImU32 col = on ? g_pal.text : ImGui::ColorConvertFloat4ToU32(g_pal.dim);
+        drawIcon(dl, tabs[i].icon, ImVec2(x + padX + icon * 0.5f, y + h * 0.5f), icon, col);
+        const float fs = ImGui::GetFontSize();
+        ImFont* f = g_bold ? g_bold : ImGui::GetFont();
+        dl->AddText(f, fs, ImVec2(x + padX + icon + gap, y + (h - fs) * 0.5f), col, tabs[i].label);
+        if (on) dl->AddRectFilled(ImVec2(x, y + h - 2.5f * d), ImVec2(x + widths[i], y + h), ImGui::ColorConvertFloat4ToU32(g_pal.accent));
+        x += widths[i];
+    }
+    dl->PopClipRect();
+}
+
+void drawFooter(float y, float h) {
+    const float d = g_density;
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(ImVec2(0, y), ImVec2(io.DisplaySize.x, y + h), g_pal.surfaceU);
+    dl->AddLine(ImVec2(0, y + 0.5f), ImVec2(io.DisplaySize.x, y + 0.5f), g_pal.border);
+    std::string label;
+    if (S.curTab == 0) {
+        const int n = countSel(S.fm);
+        if (n > 0) {
+            char b[96];
+            snprintf(b, sizeof b, T("%d dipilih (%s)"), n, fmtSize((double)sizeSel(S.fm)).c_str());
+            label = b;
+        } else label = S.fmPath;
+        if (S.clipCount) label += std::string("  |  ") + (S.clipCut ? T("Clipboard: potong") : T("Clipboard: salin"));
+    } else if (S.curTab == 1) {
+        label = std::string(T("Terima")) + " " + (S.listening ? T("nyala") : T("mati"));
+    } else label = S.shizuku ? T("Shizuku terhubung") : T("Shizuku terputus");
+    const float fs = ImGui::GetFontSize() * 0.92f;
+    const ImVec4 clip(12.f * d, y, io.DisplaySize.x - 12.f * d, y + h);
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(12.f * d, y + (h - fs) * 0.5f), ImGui::ColorConvertFloat4ToU32(g_pal.dim), label.c_str(),
+                nullptr, 0.f, &clip);
+}
+
 void drawUI() {
     const float d = g_density;
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f * d, 0.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
     ImGui::Begin("##root", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
                  ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
 
-    // title bar aksen ala Windows 10
-    const float barH = 46.f * d;
+    // bilah judul: biru (gelap pada tema gelap), nama + versi di kiri, status Shizuku di kanan
+    const float barH = 48.f * d;
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(ImVec2(0, 0), ImVec2(io.DisplaySize.x, barH), ImGui::ColorConvertFloat4ToU32(g_pal.accent));
-        const float th = ImGui::GetTextLineHeight();
+        dl->AddRectFilled(ImVec2(0, 0), ImVec2(io.DisplaySize.x, barH), ImGui::ColorConvertFloat4ToU32(g_pal.title));
+        const float fs = ImGui::GetFontSize();
         const ImU32 white = IM_COL32(255, 255, 255, 255);
-        dl->AddText(ImVec2(10.f * d, (barH - th) * 0.5f), white, "Ngirim");
-        dl->AddText(ImVec2(10.f * d + ImGui::CalcTextSize("Ngirim ").x, (barH - th) * 0.5f), IM_COL32(255, 255, 255, 190), kVersion);
-        const char* st = S.shizuku ? "Shizuku" : T("Shizuku terputus");
-        ImVec2 ts = ImGui::CalcTextSize(st);
-        float x = io.DisplaySize.x - ts.x - 14.f * d;
-        dl->AddText(ImVec2(x, (barH - th) * 0.5f), white, st);
-        dl->AddCircleFilled(ImVec2(x - 12.f * d, barH * 0.5f), 6.f * d, S.shizuku ? IM_COL32(120, 255, 140, 255) : IM_COL32(255, 120, 100, 255));
+        ImFont* bf = g_bold ? g_bold : ImGui::GetFont();
+        const float tsz = fs * 1.1f;
+        dl->AddText(bf, tsz, ImVec2(12.f * d, (barH - tsz) * 0.5f), white, "Ngirim");
+        const float nx = 12.f * d + bf->CalcTextSizeA(tsz, FLT_MAX, 0.f, "Ngirim").x + 12.f * d;
+        char ver[32];
+        snprintf(ver, sizeof ver, T("Versi %s"), kVersion[0] == 'v' ? kVersion + 1 : kVersion);
+        dl->AddText(ImGui::GetFont(), fs * 0.92f, ImVec2(nx, (barH - fs * 0.92f) * 0.5f), IM_COL32(255, 255, 255, 205), ver);
+        const char* st = S.shizuku ? T("Shizuku terhubung") : T("Shizuku terputus");
+        const float sw = ImGui::GetFont()->CalcTextSizeA(fs * 0.92f, FLT_MAX, 0.f, st).x;
+        dl->AddText(ImGui::GetFont(), fs * 0.92f, ImVec2(io.DisplaySize.x - sw - 12.f * d, (barH - fs * 0.92f) * 0.5f), white, st);
     }
     ImGui::SetCursorPosY(barH + 8.f * d);
 
@@ -1493,41 +1669,47 @@ void drawUI() {
         if (wrapButton(T("Buka app Shizuku##top"), first)) act("OPEN_SHIZUKU");
     }
 
-    if (S.tabReq >= 0) S.apkOpen = false;
+    if (S.tabReq >= 0) { S.curTab = S.tabReq; S.apkOpen = false; S.tabReq = -1; }
     if (S.pvOpen) {
         drawPreview();
     } else if (S.bOpen) {
         drawBrowser();
     } else if (S.apkOpen) {
         drawApk();
-    } else if (ImGui::BeginTabBar("tabs")) {
-        auto flag = [&](int idx) { return S.tabReq == idx ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None; };
-        if (ImGui::BeginTabItem(T("Lokal"), nullptr, flag(0))) { S.curTab = 0; drawFiles(); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Wi-Fi", nullptr, flag(1))) {
-            S.curTab = 1;
-            ImGui::BeginChild("t_net", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
-            drawNet();
-            touchScroll();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
+    } else {
+        const float tabH = 46.f * d, footH = 32.f * d;
+        const float y0 = ImGui::GetCursorScreenPos().y;
+        drawTabBar(y0, tabH);
+        const float bodyY = y0 + tabH;
+        const float bodyH = io.DisplaySize.y - bodyY - footH;
+        ImGui::SetCursorScreenPos(ImVec2(0, bodyY));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f * d, 8.f * d));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.f);
+        ImGui::BeginChild("##body", ImVec2(io.DisplaySize.x, bodyH), ImGuiChildFlags_AlwaysUseWindowPadding,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar(2);
+        switch (S.curTab) {
+            case 0: drawFiles(); break;
+            case 1:
+                ImGui::BeginChild("t_net", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
+                drawNet();
+                touchScroll();
+                ImGui::EndChild();
+                break;
+            case 2: drawFtp(); break;
+            case 3:
+                ImGui::BeginChild("t_set", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
+                drawSettings();
+                touchScroll();
+                ImGui::EndChild();
+                break;
+            default:
+                if (Btn(T("Bersihkan log"))) S.logs.clear();
+                drawTerminal("term_main", ImGui::GetContentRegionAvail().y);
+                break;
         }
-        if (ImGui::BeginTabItem("FTP", nullptr, flag(2))) { S.curTab = 2; drawFtp(); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem(T("Pengaturan"), nullptr, flag(3))) {
-            S.curTab = 3;
-            ImGui::BeginChild("t_set", ImVec2(0, 0), 0, ImGuiWindowFlags_NoScrollbar);
-            drawSettings();
-            touchScroll();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Log", nullptr, flag(4))) {
-            S.curTab = 4;
-            if (ImGui::Button(T("Bersihkan log"))) { S.logs.clear(); }
-            drawTerminal("term_main", ImGui::GetContentRegionAvail().y);
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-        S.tabReq = -1;
+        ImGui::EndChild();
+        drawFooter(io.DisplaySize.y - footH, footH);
     }
     ImGui::End();
 }
@@ -1591,13 +1773,14 @@ JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_initGl(JNIEnv*, jclass, jf
         io.IniFilename = nullptr;
         ImGui::StyleColorsLight();
         ImGuiStyle& st = ImGui::GetStyle();
-        // gaya Windows 10: datar, sudut tajam, tombol berbingkai tipis
-        st.WindowRounding = 0; st.FrameRounding = 0; st.ChildRounding = 0;
-        st.GrabRounding = 0; st.TabRounding = 0; st.ScrollbarRounding = 0; st.PopupRounding = 0;
+        // desain baru: datar, sudut membulat 4dp, tombol berbingkai tipis
+        st.WindowRounding = 4; st.FrameRounding = 4; st.ChildRounding = 4;
+        st.GrabRounding = 4; st.TabRounding = 4; st.ScrollbarRounding = 4; st.PopupRounding = 4;
         st.FrameBorderSize = 1.f; st.ChildBorderSize = 1.f; st.WindowBorderSize = 0.f; st.TabBorderSize = 0.f;
-        st.TabBarOverlineSize = 3.f;
-        st.FramePadding = ImVec2(10, 8);
-        st.ItemSpacing = ImVec2(8, 10);
+        st.PopupBorderSize = 1.f;
+        st.TabBarOverlineSize = 2.f;
+        st.FramePadding = ImVec2(12, 9);
+        st.ItemSpacing = ImVec2(8, 8);
         st.ScrollbarSize = 6;
         st.SeparatorTextBorderSize = 1.f;
         st.ScaleAllSizes(density);
@@ -1606,10 +1789,18 @@ JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_initGl(JNIEnv*, jclass, jf
             applyTheme(S.dark);
         }
 
-        float px = 15.f * density;
-        const char* font = "/system/fonts/Roboto-Regular.ttf";
-        if (access(font, R_OK) == 0) io.Fonts->AddFontFromFileTTF(font, px);
-        else { ImFontConfig c; c.SizePixels = px; io.Fonts->AddFontDefault(&c); }
+        // Source Sans 3 dari assets (dikirim Kotlin lewat setFonts); cadangan: Roboto sistem
+        const float px = 16.f * density;
+        ImFontConfig fc;
+        fc.FontDataOwnedByAtlas = false;
+        fc.OversampleH = 2; fc.OversampleV = 1;
+        if (!g_fontReg.empty()) io.Fonts->AddFontFromMemoryTTF(g_fontReg.data(), (int)g_fontReg.size(), px, &fc);
+        else {
+            const char* font = "/system/fonts/Roboto-Regular.ttf";
+            if (access(font, R_OK) == 0) io.Fonts->AddFontFromFileTTF(font, px);
+            else { ImFontConfig c; c.SizePixels = px; io.Fonts->AddFontDefault(&c); }
+        }
+        if (!g_fontBold.empty()) g_bold = io.Fonts->AddFontFromMemoryTTF(g_fontBold.data(), (int)g_fontBold.size(), px, &fc);
 
         const char* mono = "/system/fonts/DroidSansMono.ttf";
         if (access(mono, R_OK) == 0) g_mono = io.Fonts->AddFontFromFileTTF(mono, 13.f * density);
@@ -1657,6 +1848,18 @@ JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_touch(JNIEnv*, jclass, jin
         g_touchQ.push_back({1, x, y});
         g_touchQ.push_back({2, x, y});
     }
+}
+
+// Font dikirim dari Kotlin (assets) sebelum initGl.
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setFonts(JNIEnv* e, jclass, jbyteArray reg, jbyteArray bold) {
+    auto cp = [&](jbyteArray a, std::vector<unsigned char>& out) {
+        if (!a) return;
+        const jsize n = e->GetArrayLength(a);
+        out.resize((size_t)n);
+        e->GetByteArrayRegion(a, 0, n, reinterpret_cast<jbyte*>(out.data()));
+    };
+    cp(reg, g_fontReg);
+    cp(bold, g_fontBold);
 }
 
 JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setShizuku(JNIEnv* e, jclass, jboolean ok, jstring msg) {

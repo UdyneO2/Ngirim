@@ -264,6 +264,11 @@ class MainActivity : Activity() {
         Native.log("Ngirim v${BuildConfig.VERSION_NAME} siap")
         bookmarks.addAll((prefs.getString("bookmarks", "") ?: "").split("\n").filter { it.isNotEmpty() })
         Native.setBookmarks(bookmarks.toTypedArray())
+        try {
+            Native.setFonts(
+                assets.open("fonts/SourceSans3-Regular.ttf").use { it.readBytes() },
+                assets.open("fonts/SourceSans3-Semibold.ttf").use { it.readBytes() })
+        } catch (_: Throwable) { /* pakai font sistem */ }
         pushNetInfo()
         handlePairLink(intent)
 

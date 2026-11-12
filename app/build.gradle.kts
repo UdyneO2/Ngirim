@@ -4,8 +4,8 @@ plugins {
 }
 
 // Versi bisa di-override dari CI: -PversionName=2.8 -PversionCode=13
-val vName = (project.findProperty("versionName") as String?) ?: "2.8"
-val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 13
+val vName = (project.findProperty("versionName") as String?) ?: "2.9"
+val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 14
 
 android {
     namespace = "com.udyneos.ngirim"
