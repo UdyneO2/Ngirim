@@ -1329,13 +1329,13 @@ void drawSettings() {
     dimWrapped(T("Kirim lewat Wi-Fi, kelola dua folder sekaligus, dan backup aplikasi ke XAPK, semuanya dalam satu app."));
     ImGui::Spacing();
     ImGui::Text(T("Versi %s"), kVersion);
-    dimWrapped(T("Dibuat oleh UdyneO2. Dibangun dengan Dear ImGui, Shizuku API, dan Kotlin."));
+    dimWrapped(T("Dibuat oleh mnrdnn. Dibangun dengan Dear ImGui, Shizuku API, dan Kotlin."));
     dimWrapped("github.com/UdyneO2/Ngirim");
     
     if (ImGui::TreeNode(T("Lisensi"))) {
         ImGui::SetWindowFontScale(0.92f);
         ImGui::TextWrapped("Ngirim - MIT License");
-        dimWrapped("Copyright (c) 2026 UdyneO2");
+        dimWrapped("Copyright (c) 2026 mnrdnn");
         dimWrapped(T("Boleh dipakai, diubah, dan dibagikan selama pemberitahuan hak cipta ini disertakan. Tanpa jaminan."));
         ImGui::Spacing();
         ImGui::TextWrapped("Dear ImGui - MIT License (Omar Cornut)");
@@ -1563,7 +1563,7 @@ void drawTabBar(float y, float h) {
     struct Tab { const char* label; Icon icon; };
     const Tab tabs[] = {{T("Lokal"), IC_FOLDER}, {"Wi-Fi", IC_WIFI}, {"FTP", IC_PHONE}, {T("Setting"), IC_GEAR}, {"Log", IC_LOG}};
     const int n = 5;
-    const float padX = 16.f * d, icon = 16.f * d, gap = 8.f * d;
+    const float padX = 15.f * d, icon = 18.f * d, gap = 8.f * d;
     float widths[5], total = 0;
     if (g_bold) ImGui::PushFont(g_bold);
     for (int i = 0; i < n; i++) { widths[i] = padX * 2 + icon + gap + ImGui::CalcTextSize(tabs[i].label).x; total += widths[i]; }
@@ -1587,7 +1587,7 @@ void drawTabBar(float y, float h) {
     scroll = std::max(0.f, std::min(scroll, maxScroll));
 
     dl->PushClipRect(base, ImVec2(W, y + h), true);
-    float x = (total < W) ? (W - total) * 0.5f : -scroll;
+    float x = (total < W) ? (W - total) * 0.5f;
     for (int i = 0; i < n; i++) {
         const bool on = S.curTab == i;
         ImGui::SetCursorScreenPos(ImVec2(x, y));
