@@ -61,6 +61,7 @@ android {
 dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+    implementation ("androidx.core:core-ktx:1.13.1")
     // Pemindai QR bawaan (kamera + izin ditangani pustaka)
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }
