@@ -23,7 +23,7 @@
 
 namespace {
 
-constexpr const char* kVersion = "v2.9";
+constexpr const char* kVersion = "v2.9.2";
 
 std::string urlEncode(const std::string& in) {
     static const char* hex = "0123456789ABCDEF";
@@ -55,7 +55,7 @@ struct State {
     bool logDirty = false;
     int curTab = 0;   // tab yang sedang tampil (untuk tombol Kembali)
     int tabReq = -1;  // paksa pindah tab (indeks), -1 = tidak
-    // ---- pengaturan
+    // ---- Setting
     bool dark = false, showHidden = false, useTrash = true;
     std::string langPref = "auto", sysLang = "en";
     bool instShizuku = false, autoUpdate = true;   // mode pasang APK, cek update saat dibuka
@@ -207,27 +207,27 @@ struct Rilis {
 
 // Urut dari versi terlama ke terbaru.
 const std::vector<Rilis> kRilis = {
-    {"v1.0", "Rilis stabil pertama", "8 Nov 2026 - gabungan v1.1 dan v1.2 beta",
-     {"Koneksi Shizuku diperbaiki: tersambung sendiri setelah izin diberikan, tak lagi menggantung di 'Menunggu Shizuku'",
-      "Ada tombol langsung ke app Shizuku dan pesan status yang lebih jelas",
-      "Semua fitur beta di bawah ikut di rilis ini"}},
-    {"v1.1 beta", "Kirim lewat Wi-Fi", "8 Nov 2026",
+    {"v0.1 beta", "Kirim lewat Wi-Fi", "8 Nov 2026",
      {"Transfer antar-HP di Wi-Fi yang sama, dipasangkan dengan PIN 6 digit",
       "Kirim file dan folder lengkap dengan isinya; penerima memilih folder simpan",
       "Backup dan restore APK (termasuk split), foto, serta data game OBB dan DATA",
       "Progress langsung: persen, kecepatan, sisa waktu; bisa dibatalkan kapan saja",
       "Log gaya terminal dan akses file lewat Shizuku, tanpa root"}},
-    {"v1.2 beta", "FTP dan saklar Terima", "8 Nov 2026",
+    {"v0.2 beta", "FTP dan saklar Terima", "8 Nov 2026",
      {"Tab FTP: dua folder berdampingan dengan pintasan folder dan favorit sendiri",
       "Panel kanan bisa menjelajah HP lain yang sudah dipasangkan, lalu salin ke dua arah",
       "Saklar Terima ON/OFF; perangkat aktif muncul otomatis di daftar",
       "Perbaikan: tab Wi-Fi, FTP, dan lainnya tidak bisa diketuk"}},
+    {"v1.1", "Rilis stabil pertama", "8 Nov 2026 - gabungan v0.1 beta dan v0.2 beta",
+     {"Koneksi Shizuku diperbaiki: tersambung sendiri setelah izin diberikan, tak lagi menggantung di 'Menunggu Shizuku'",
+      "Ada tombol langsung ke app Shizuku dan pesan status yang lebih jelas",
+      "Semua fitur beta di bawah ikut di rilis ini"}},
     {"v2.0", "Tampilan baru dan file manager", "9 Nov 2026",
      {"Antarmuka ala Windows 10 dengan tema Terang dan Gelap",
       "Tab Lokal jadi file manager: salin, potong, tempel, hapus ke sampah, ubah nama, properti, cari",
       "Akses cepat ke folder penting, bisa menyematkan folder sendiri",
       "Backup APK langsung ke .xapk, OBB dan DATA game opsional",
-      "Tab Pengaturan menggantikan Changelog; Terminal berganti nama jadi Log"}},
+      "Tab Setting menggantikan Changelog; Terminal berganti nama jadi Log"}},
     {"v2.1", "Update langsung dan Legacy", "9 Nov 2026",
      {"Cek pembaruan dari GitHub Release, tampil catatan rilis lalu pasang langsung",
       "File manager: Buka, Bagikan, Pasang APK, dan Ekstrak ZIP",
@@ -236,10 +236,10 @@ const std::vector<Rilis> kRilis = {
       "Nama paket jadi com.udyneos.ngirim (terpasang sebagai aplikasi baru)",
       "FTP: kotak centang lebih kecil, nama panjang kini terbaca"}},
     {"v2.2", "Warna aksen dan bahasa", "10 Nov 2026",
-     {"Pilihan warna aksen di Pengaturan",
+     {"Pilihan warna aksen di Setting",
       "Bahasa Indonesia dan Inggris, otomatis mengikuti bahasa sistem",
       "Tabel bahasa terpisah, jadi bahasa baru mudah ditambahkan",
-      "Riwayat perubahan di Pengaturan diringkas dalam satu bagian lipat"}},
+      "Riwayat perubahan di Setting diringkas dalam satu bagian lipat"}},
     {"v2.3", "Arsip ZIP dan QR", "10 Nov 2026",
      {"Tombol Arsipkan di file manager: buat .zip dari file/folder terpilih",
       "Pairing lewat QR: tampilkan QR di penerima, pindai dengan kamera pengirim"}},
@@ -1238,7 +1238,7 @@ void drawFtp() {
     progressBlock(S.fBusy, S.fDone, S.fTotal, S.fSpeed, S.fCur);
 }
 
-// ------------------------------------------------------------------ Pengaturan
+// ------------------------------------------------------------------ Setting
 void settingToggle(const char* id, const char* label, const char* sub, bool on, const std::string& key) {
     const float d = g_density;
     ImVec2 q = ImGui::GetCursorScreenPos();
@@ -1331,6 +1331,7 @@ void drawSettings() {
     ImGui::Text(T("Versi %s"), kVersion);
     dimWrapped(T("Dibuat oleh UdyneO2. Dibangun dengan Dear ImGui, Shizuku API, dan Kotlin."));
     dimWrapped("github.com/UdyneO2/Ngirim");
+    
     if (ImGui::TreeNode(T("Lisensi"))) {
         ImGui::SetWindowFontScale(0.92f);
         ImGui::TextWrapped("Ngirim - MIT License");
@@ -1349,9 +1350,11 @@ void drawSettings() {
     ImGui::Spacing();
     {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f * d, 10.f * d));
-        const bool open = ImGui::CollapsingHeader(
-            (std::string(T("Riwayat perubahan")) + "  (v1.0 - " + kRilis.back().ver + ")###rl").c_str());
+        // Menggunakan TreeNode
+        const bool open = ImGui::TreeNode(
+            (std::string(T("Riwayat perubahan")) + "  (v0.1 beta - " + kRilis.back().ver + ")###rl").c_str());
         ImGui::PopStyleVar();
+        
         if (open) {
             ImGui::SetWindowFontScale(0.92f);
             for (const Rilis& r : kRilis) {
@@ -1371,11 +1374,14 @@ void drawSettings() {
             }
             ImGui::TextColored(g_pal.warn, "%s", T("Batasan yang diketahui"));
             for (const char* it : kBatasan) ImGui::TextWrapped("- %s", T(it));
-            ImGui::SetWindowFontScale(1.f);
+            
+            ImGui::SetWindowFontScale(1.f); // Skala dikembalikan ke normal
+            ImGui::TreePop(); // Pop untuk TreeNode Riwayat Perubahan
         }
     }
     ImGui::Dummy(ImVec2(0, 24.f * d));
 }
+
 
 // ------------------------------------------------------------------ file browser (pilih file/folder)
 void drawBrowser() {
@@ -1555,9 +1561,9 @@ void drawTabBar(float y, float h) {
     const ImGuiIO& io = ImGui::GetIO();
     const float W = io.DisplaySize.x;
     struct Tab { const char* label; Icon icon; };
-    const Tab tabs[] = {{T("Lokal"), IC_FOLDER}, {"Wi-Fi", IC_WIFI}, {"FTP", IC_PHONE}, {T("Pengaturan"), IC_GEAR}, {"Log", IC_LOG}};
+    const Tab tabs[] = {{T("Lokal"), IC_FOLDER}, {"Wi-Fi", IC_WIFI}, {"FTP", IC_PHONE}, {T("Setting"), IC_GEAR}, {"Log", IC_LOG}};
     const int n = 5;
-    const float padX = 16.f * d, icon = 18.f * d, gap = 8.f * d;
+    const float padX = 16.f * d, icon = 16.f * d, gap = 8.f * d;
     float widths[5], total = 0;
     if (g_bold) ImGui::PushFont(g_bold);
     for (int i = 0; i < n; i++) { widths[i] = padX * 2 + icon + gap + ImGui::CalcTextSize(tabs[i].label).x; total += widths[i]; }
@@ -1581,7 +1587,7 @@ void drawTabBar(float y, float h) {
     scroll = std::max(0.f, std::min(scroll, maxScroll));
 
     dl->PushClipRect(base, ImVec2(W, y + h), true);
-    float x = -scroll;
+    float x = (total < W) ? (W - total) * 0.5f : -scroll;
     for (int i = 0; i < n; i++) {
         const bool on = S.curTab == i;
         ImGui::SetCursorScreenPos(ImVec2(x, y));
