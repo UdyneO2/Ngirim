@@ -2,6 +2,18 @@
 
 Versi terbaru di atas. Di dalam aplikasi, riwayat ini ada di Pengaturan > Riwayat perubahan.
 
+## v2.10 (12 Nov 2026)
+
+- **Bilah tab** menyatu dengan bilah judul (tanpa garis pemisah) dan tidak lagi digeser: tab terbuka berbagi
+  lebar, label dipotong atau hilang bila sempit.
+- **Tab bisa ditutup** dengan tombol X dan berubah menjadi ikon saja; ketuk ikonnya untuk membukanya lagi.
+- **Banyak file manager**: tombol + membuka tab file manager baru (maksimal 6) dengan folder masing-masing.
+  Clipboard dipakai bersama, jadi salin di satu tab lalu tempel di tab lain. Tab file manager terakhir tidak
+  bisa ditutup.
+- **Antrean multi-perangkat**: pairing beberapa perangkat sekaligus, centang yang ingin dikirimi, lalu
+  file dikirim berurutan dengan status per perangkat. Tersedia tombol "Ulangi yang gagal". Ketuk nama
+  perangkat untuk memakainya di tab FTP.
+
 ## v2.9 (12 Nov 2026)
 
 - **Tampilan baru** mengikuti desain web yang diberikan: bilah judul biru (gelap di tema gelap) dengan

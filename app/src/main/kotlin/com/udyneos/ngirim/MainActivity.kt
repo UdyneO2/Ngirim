@@ -115,6 +115,16 @@ class MainActivity : Activity() {
     private val peers = ArrayList<Peer>()
     @Volatile private var paired: Peer? = null
     @Volatile private var pairedPin = ""
+    // antrean multi-perangkat: semua perangkat yang sudah dipasangkan; `paired` = yang aktif untuk FTP
+    private class Target(val peer: Peer, val pin: String) {
+        @Volatile var state = 0   // 0 menunggu, 1 mengirim, 2 selesai, 3 gagal
+        @Volatile var on = true   // ikut dikirimi
+    }
+    private val targets = ArrayList<Target>()
+    private val sendQueue = ArrayList<Target>()
+    @Volatile private var qRun = false
+    @Volatile private var qCancel = false
+    @Volatile private var qTotal = 0
     private val sendList = ArrayList<String>()
     @Volatile private var recvDir = "/sdcard/Ngirim/Terima"
     @Volatile private var allowBrowse = false
@@ -387,8 +397,7 @@ class MainActivity : Activity() {
                 if (s == null) { Native.log("ERR Shizuku belum siap"); return@Thread }
                 val err = try { s.checkPair(host, port, pin, myName) } catch (t: Throwable) { t.message ?: "error" }
                 if (err.isEmpty()) {
-                    paired = Peer(name, host, port, null); pairedPin = pin
-                    pushNetInfo()
+                    addTarget(Peer(name, host, port, null), pin)
                     Native.log("OK     pairing dengan $name ($host:$port) lewat QR")
                     Native.selectTab(1)
                 } else Native.log("ERR pairing gagal: $err")
@@ -523,6 +532,7 @@ class MainActivity : Activity() {
                 if (i != null) startActivity(i) else Native.log("ERR app Shizuku tidak ditemukan - pasang dari shizuku.rikka.app")
             }
             "CANCEL", "NET_CANCEL" -> {
+                if (qRun) qCancel = true
                 synchronized(apkQueue) { apkQueue.clear() }
                 Thread { try { svc?.cancel() } catch (_: Throwable) {} }.start()
             }
@@ -571,10 +581,13 @@ class MainActivity : Activity() {
             }
             "NET_PAIR" -> pair(p[1].toInt())
             "NET_CLEAR" -> { sendList.clear() }
-            "NET_SEND" -> worker.execute { sendNow() }
+            "NET_SEND" -> worker.execute { startQueue(false) }
+            "NET_RETRY" -> worker.execute { startQueue(true) }
+            "NET_TSEL" -> { synchronized(targets) { targets.getOrNull(p[1].toInt())?.let { it.on = !it.on } }; publishTargets() }
+            "NET_ACTIVE" -> { val t = synchronized(targets) { targets.getOrNull(p[1].toInt()) }; if (t != null) worker.execute { setActiveTarget(t) } }
             "NET_LISTEN" -> worker.execute { listenNow() }
             "NET_STOP" -> worker.execute { stopListenNow() }
-            "NET_DISCONNECT" -> disconnectPeer()
+            "NET_DISCONNECT" -> disconnectPeer(p.getOrNull(1)?.toIntOrNull() ?: 0)
             "RX_ON" -> worker.execute { listenNow() }
             "RX_OFF" -> worker.execute { stopListenNow() }
             "RX_BROWSE" -> {
@@ -791,8 +804,7 @@ class MainActivity : Activity() {
                 if (s == null) { Native.log("ERR Shizuku belum siap"); return@execute }
                 val err = try { s.checkPair(peer.host, peer.port, pin, myName) } catch (t: Throwable) { t.message ?: "error" }
                 if (err.isEmpty()) {
-                    paired = peer; pairedPin = pin
-                    pushNetInfo()
+                    addTarget(peer, pin)
                     Native.log("OK     pairing dengan ${peer.name} (${peer.host}:${peer.port})")
                 } else {
                     Native.log("ERR pairing gagal: $err")
@@ -801,18 +813,87 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun sendNow() {
+    private fun addTarget(peer: Peer, pin: String) {
+        synchronized(targets) {
+            targets.removeAll { it.peer.host == peer.host && it.peer.port == peer.port }
+            targets.add(Target(peer, pin))
+        }
+        paired = peer; pairedPin = pin
+        publishTargets(); pushNetInfo()
+    }
+
+    private fun publishTargets() {
+        val l = synchronized(targets) { targets.toList() }
+        val act = l.indexOfFirst { it.peer === paired }
+        Native.setTargets(l.map { it.peer.name }.toTypedArray(), IntArray(l.size) { l[it].state },
+            BooleanArray(l.size) { l[it].on }, act)
+    }
+
+    private fun setActiveTarget(t: Target?) {
+        paired = t?.peer; pairedPin = t?.pin ?: ""
+        if (panes[1].remote) { panes[1].remote = false; panes[1].path = panes[1].localPath; paneLoad(1) }
+        publishTargets(); pushNetInfo()
+    }
+
+    /** Kirim daftar yang sama ke tiap perangkat terpilih, satu per satu. onlyFailed: ulangi yang gagal saja. */
+    private fun startQueue(onlyFailed: Boolean) {
         val s = svc
-        val p = paired
-        if (s == null || p == null || sendList.isEmpty()) {
-            Native.setNetProgress(false, 0, 0, 0.0, ""); return
+        if (qRun) return
+        val list = synchronized(targets) { targets.filter { it.on && (!onlyFailed || it.state == 3) } }
+        if (s == null || list.isEmpty() || sendList.isEmpty()) {
+            Native.setNetProgress(false, 0, 0, 0.0, "")
+            Native.log("ERR pilih perangkat dan file dulu"); return
+        }
+        qRun = true; qCancel = false; qTotal = list.size
+        list.forEach { it.state = 0 }
+        synchronized(sendQueue) { sendQueue.clear(); sendQueue.addAll(list) }
+        publishTargets()
+        Native.setNetProgress(true, 0, 0, 0.0, "Menyiapkan...")
+        runHead(0)
+    }
+
+    private fun endQueue() {
+        qRun = false
+        synchronized(sendQueue) { sendQueue.clear() }
+        val l = synchronized(targets) { targets.toList() }
+        val ok = l.count { it.state == 2 }; val bad = l.count { it.state == 3 }
+        if (l.size > 1 || bad > 0) Native.log("Antrean selesai: $ok berhasil, $bad gagal")
+        Native.setNetProgress(false, 0, 0, 0.0, "")
+        publishTargets()
+    }
+
+    private fun runHead(attempt: Int) {
+        val s = svc
+        val t = synchronized(sendQueue) { sendQueue.firstOrNull() }
+        if (t == null || qCancel || s == null) { endQueue(); return }
+        t.state = 1; publishTargets()
+        val idx = qTotal - synchronized(sendQueue) { sendQueue.size } + 1
+        if (attempt == 0) Native.log("Mengirim ${sendList.size} item ke ${t.peer.name} ($idx/$qTotal)")
+        val cb = object : IProgressCallback.Stub() {
+            override fun onProgress(current: String, done: Long, total: Long, bytesPerSec: Double) {
+                Native.setNetProgress(true, done, total, bytesPerSec, "[$idx/$qTotal] ${t.peer.name}: $current")
+            }
+            override fun onLog(msg: String) { Native.log(msg) }
+            override fun onFinish(ok: Boolean, message: String, done: Long, total: Long) {
+                // layanan baru bebas sesaat setelah onFinish; coba lagi sebentar bila masih sibuk
+                if (!ok && message == "Transfer lain masih berjalan" && attempt < 12 && !qCancel) {
+                    Thread { Thread.sleep(350); runHead(attempt + 1) }.start(); return
+                }
+                Native.log((if (ok) "OK     " else "ERR    ") + t.peer.name + ": " + message)
+                t.state = if (ok) 2 else 3
+                synchronized(sendQueue) { if (sendQueue.isNotEmpty()) sendQueue.removeAt(0) }
+                publishTargets()
+                if (qCancel) endQueue() else Thread { Thread.sleep(350); runHead(0) }.start()
+            }
         }
         try {
-            Native.log("Mengirim ${sendList.size} item ke ${p.name}")
-            s.send(p.host, p.port, pairedPin, myName, sendList.toTypedArray(), netCb)
-        } catch (t: Throwable) {
-            Native.log("ERR kirim: ${t.message}")
-            Native.setNetProgress(false, 0, 0, 0.0, "")
+            s.send(t.peer.host, t.peer.port, t.pin, myName, sendList.toTypedArray(), cb)
+        } catch (th: Throwable) {
+            Native.log("ERR kirim ke ${t.peer.name}: ${th.message}")
+            t.state = 3
+            synchronized(sendQueue) { if (sendQueue.isNotEmpty()) sendQueue.removeAt(0) }
+            publishTargets()
+            runHead(0)
         }
     }
 
@@ -843,13 +924,11 @@ class MainActivity : Activity() {
         Native.setNetProgress(false, 0, 0, 0.0, "")
     }
 
-    private fun disconnectPeer() {
-        paired = null; pairedPin = ""
-        sendList.clear(); publishSendList()
-        pushNetInfo()
-        panes[1].remote = false
-        panes[1].path = panes[1].localPath
-        paneLoad(1)
+    private fun disconnectPeer(i: Int) {
+        val t = synchronized(targets) { targets.getOrNull(i)?.also { targets.remove(it) } } ?: return
+        if (t.peer === paired) setActiveTarget(synchronized(targets) { targets.lastOrNull() })
+        if (synchronized(targets) { targets.isEmpty() }) { sendList.clear(); publishSendList() }
+        publishTargets(); pushNetInfo()
     }
 
     private fun askText(title: String, hint: String, numeric: Boolean, initial: String = "", onOk: (String) -> Unit) = runOnUiThread {

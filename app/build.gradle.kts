@@ -4,7 +4,7 @@ plugins {
 }
 
 // Versi bisa di-override dari CI: -PversionName=2.8 -PversionCode=13
-val vName = (project.findProperty("versionName") as String?) ?: "2.9"
+val vName = (project.findProperty("versionName") as String?) ?: "2.10"
 val vCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 14
 
 android {

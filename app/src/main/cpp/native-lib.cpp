@@ -23,7 +23,7 @@
 
 namespace {
 
-constexpr const char* kVersion = "v2.9.2";
+constexpr const char* kVersion = "v2.10";
 
 std::string urlEncode(const std::string& in) {
     static const char* hex = "0123456789ABCDEF";
@@ -87,6 +87,9 @@ struct State {
     std::string permMsg = "Memeriksa...";
     std::vector<std::string> peers;
     std::string pairedName, addr, pin, recvDir;
+    struct Target { std::string name; int state = 0; bool on = true; };  // state: 0 menunggu 1 kirim 2 selesai 3 gagal
+    std::vector<Target> targets;
+    int targetActive = -1;
     bool listening = false;
     bool allowBrowse = false;
     std::vector<Item> sendList;
@@ -266,7 +269,12 @@ const std::vector<Rilis> kRilis = {
     {"v2.9", "Tampilan baru", "12 Nov 2026",
      {"Seluruh tampilan didesain ulang: bilah judul biru, tab berikon, bilah status di bawah, panel berbingkai",
       "Font Source Sans 3 (lisensi OFL), toggle bentuk pil, kotak centang dan progress bar membulat",
-      "Tema terang dan gelap mengikuti palet baru"}}
+      "Tema terang dan gelap mengikuti palet baru"}},
+    {"v2.10", "Tab fleksibel dan antrean perangkat", "12 Nov 2026",
+     {"Bilah tab menyatu dengan bilah judul, tanpa garis dan tanpa geser: tab berbagi lebar, label hilang bila sempit",
+      "Tab bisa ditutup dengan X dan menjadi ikon saja; ketuk ikon untuk membukanya lagi",
+      "Tombol + membuka file manager tambahan (maks. 6) dengan folder sendiri; clipboard dipakai bersama",
+      "Kirim ke banyak perangkat sekaligus: centang perangkat, file dikirim berurutan, bisa diulang untuk yang gagal"}}
 };
 
 const std::vector<const char*> kBatasan = {
@@ -1075,16 +1083,47 @@ void drawNet() {
         if (clicked) act("NET_PAIR|" + std::to_string(i));
     }
 
-    // ---- Terhubung
-    if (!S.pairedName.empty()) {
+    // ---- Terhubung (banyak perangkat, dikirimi berurutan)
+    if (!S.targets.empty()) {
         Heading(T("Terhubung"));
-        ImGui::TextColored(ok, "%s", S.pairedName.c_str());
-        ImGui::SameLine();
         ImGui::BeginDisabled(S.netBusy);
-        if (Btn(T("Putus"))) act("NET_DISCONNECT");
-        ImGui::EndDisabled();
-        ImGui::TextDisabled("%s", T("Jelajah dan salin dua arah ada di tab FTP."));
-        ImGui::BeginDisabled(S.netBusy);
+        int selected = 0, failed = 0;
+        for (int i = 0; i < (int)S.targets.size(); i++) {
+            const auto& t = S.targets[i];
+            if (t.on) selected++;
+            if (t.state == 3) failed++;
+            ImGui::PushID(i);
+            const float rowH = 48.f * d;
+            ImVec2 q = ImGui::GetCursorScreenPos();
+            const float W = ImGui::GetContentRegionAvail().x;
+            const float xW = 44.f * d;
+            ImGui::SetNextItemAllowOverlap();
+            if (ImGui::Selectable("##t", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(W, rowH))) act("NET_ACTIVE|" + std::to_string(i));
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            drawCheck(dl, ImVec2(q.x + 22.f * d, q.y + rowH * 0.5f), 22.f * d, t.on);
+            ImGui::SetCursorScreenPos(q);
+            if (ImGui::InvisibleButton("##sel", ImVec2(44.f * d, rowH))) act("NET_TSEL|" + std::to_string(i));
+            const char* st = t.state == 1 ? T("Mengirim") : t.state == 2 ? T("Selesai") : t.state == 3 ? T("Gagal") : "";
+            ImVec4 sc = t.state == 2 ? ok : t.state == 3 ? g_pal.err : g_pal.accent;
+            const float fs = ImGui::GetFontSize();
+            std::string nm = t.name + (i == S.targetActive ? "  (FTP)" : "");
+            dl->PushClipRect(ImVec2(q.x + 44.f * d, q.y), ImVec2(q.x + W - xW - 70.f * d, q.y + rowH), true);
+            dl->AddText(ImVec2(q.x + 44.f * d, q.y + (rowH - fs) * 0.5f), g_pal.text, nm.c_str());
+            dl->PopClipRect();
+            if (*st) {
+                const float sw = ImGui::CalcTextSize(st).x;
+                dl->AddText(ImVec2(q.x + W - xW - sw - 8.f * d, q.y + (rowH - fs) * 0.5f), ImGui::ColorConvertFloat4ToU32(sc), st);
+            }
+            ImGui::SetCursorScreenPos(ImVec2(q.x + W - xW, q.y));
+            if (ImGui::InvisibleButton("##x", ImVec2(xW, rowH))) act("NET_DISCONNECT|" + std::to_string(i));
+            const ImVec2 c(q.x + W - xW * 0.5f, q.y + rowH * 0.5f);
+            const float r = 5.f * d;
+            dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), ImGui::ColorConvertFloat4ToU32(g_pal.dim), 1.8f * d);
+            dl->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), ImGui::ColorConvertFloat4ToU32(g_pal.dim), 1.8f * d);
+            ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + rowH));
+            ImGui::PopID();
+        }
+        ImGui::TextDisabled("%s", T("Centang perangkat yang dikirimi; ketuk nama untuk dipakai di tab FTP."));
         if (Btn("+ File / folder")) act("BPURPOSE|1");
         ImGui::SameLine();
         if (Btn(T("Kosongkan"))) { S.sendList.clear(); act("NET_CLEAR"); }
@@ -1094,15 +1133,22 @@ void drawNet() {
         for (int i = 0; i < (int)S.sendList.size() && i < kShow; i++) ImGui::TextWrapped("%s", S.sendList[i].name.c_str());
         if ((int)S.sendList.size() > kShow) ImGui::TextDisabled(T("... dan %d lainnya"), (int)S.sendList.size() - kShow);
         if (!S.netBusy) {
-            ImGui::BeginDisabled(S.sendList.empty());
+            ImGui::BeginDisabled(S.sendList.empty() || selected == 0);
             ImGui::PushStyleColor(ImGuiCol_Button, acc);
             ImGui::PushStyleColor(ImGuiCol_Text, g_pal.onAccent);
-            if (Btn(T("KIRIM SEKARANG"), ImVec2(-FLT_MIN, 56.f * d))) {
+            char lb[96];
+            if (selected > 1) snprintf(lb, sizeof lb, T("KIRIM KE %d PERANGKAT"), selected);
+            else snprintf(lb, sizeof lb, "%s", T("KIRIM SEKARANG"));
+            if (Btn(lb, ImVec2(-FLT_MIN, 56.f * d))) {
                 act("NET_SEND");
                 S.netBusy = true; S.netDone = 0; S.netTotal = 0; S.netSpeed = 0; S.netCur = "Menyiapkan...";
             }
             ImGui::PopStyleColor(2);
             ImGui::EndDisabled();
+            if (failed > 0 && Btn(T("Ulangi yang gagal"), ImVec2(-FLT_MIN, 0))) {
+                act("NET_RETRY");
+                S.netBusy = true; S.netDone = 0; S.netTotal = 0; S.netSpeed = 0; S.netCur = "Menyiapkan...";
+            }
         } else {
             if (Btn(T("BATALKAN"), ImVec2(-FLT_MIN, 56.f * d))) act("NET_CANCEL");
         }
@@ -1331,7 +1377,6 @@ void drawSettings() {
     ImGui::Text(T("Versi %s"), kVersion);
     dimWrapped(T("Dibuat oleh UdyneO2. Dibangun dengan Dear ImGui, Shizuku API, dan Kotlin."));
     dimWrapped("github.com/UdyneO2/Ngirim");
-    
     if (ImGui::TreeNode(T("Lisensi"))) {
         ImGui::SetWindowFontScale(0.92f);
         ImGui::TextWrapped("Ngirim - MIT License");
@@ -1555,57 +1600,184 @@ void drawIcon(ImDrawList* dl, Icon ic, ImVec2 c, float size, ImU32 col) {
     }
 }
 
-// Bilah tab datar: ikon + label, garis bawah aksen pada tab aktif. Bisa digeser mendatar bila tak muat.
+// ------------------------------------------------------------------ model tab
+// kind: 0 file manager (boleh banyak), 1 Wi-Fi, 2 FTP, 3 Setting, 4 Log. `closed` = tampil sebagai ikon saja.
+struct TabDef { int kind; bool closed = false; std::string path; };
+std::vector<TabDef> g_tabs = {{0}, {1}, {2}, {3}, {4}};
+int g_cur = 0, g_lastFm = 0;
+std::string g_waitPath;   // path tujuan setelah ganti tab FM; jangan ditimpa sebelum Kotlin memuatnya
+int g_waitFrames = 0;
+constexpr int kMaxFm = 6;
+
+int fmCount() { int n = 0; for (auto& t : g_tabs) if (t.kind == 0) n++; return n; }
+
+void selectTabIdx(int i) {
+    if (i < 0 || i >= (int)g_tabs.size()) return;
+    if (g_tabs[g_cur].kind == 0 && g_waitPath.empty()) g_tabs[g_cur].path = S.fmPath;
+    g_cur = i;
+    g_tabs[i].closed = false;
+    S.curTab = g_tabs[i].kind;
+    S.apkOpen = false;
+    if (g_tabs[i].kind == 0) {
+        g_lastFm = i;
+        if (g_tabs[i].path.empty()) g_tabs[i].path = S.fmPath;
+        else if (g_tabs[i].path != S.fmPath) { g_waitPath = g_tabs[i].path; g_waitFrames = 90; act("FM|GO|" + g_tabs[i].path); }
+        else g_waitPath.clear();
+    }
+}
+
+// permintaan pindah tab dari luar (Kotlin/Kembali): berdasarkan jenis tab
+void selectTabKind(int kind) {
+    int idx = -1;
+    if (kind == 0 && g_lastFm < (int)g_tabs.size() && g_tabs[g_lastFm].kind == 0) idx = g_lastFm;
+    for (int i = 0; idx < 0 && i < (int)g_tabs.size(); i++) if (g_tabs[i].kind == kind) idx = i;
+    selectTabIdx(idx);
+}
+
+void newFmTab() {
+    if (fmCount() >= kMaxFm) return;
+    if (g_tabs[g_cur].kind == 0 && g_waitPath.empty()) g_tabs[g_cur].path = S.fmPath;
+    int at = g_lastFm + 1;
+    g_tabs.insert(g_tabs.begin() + at, TabDef{0, false, S.fmPath});
+    g_waitPath.clear();
+    g_cur = at; g_lastFm = at;
+    S.curTab = 0; S.apkOpen = false;
+}
+
+void closeTab(int i) {
+    if (i < 0 || i >= (int)g_tabs.size()) return;
+    if (g_tabs[i].kind == 0) {
+        if (fmCount() <= 1) return;
+        g_tabs.erase(g_tabs.begin() + i);
+        if (g_cur > i) g_cur--;
+        // tab FM terdekat (kiri dulu) menjadi tujuan
+        int j = -1;
+        for (int k = std::min(i, (int)g_tabs.size()) - 1; k >= 0 && j < 0; k--) if (g_tabs[k].kind == 0) j = k;
+        for (int k = i; k < (int)g_tabs.size() && j < 0; k++) if (g_tabs[k].kind == 0) j = k;
+        g_cur = j; g_lastFm = j; g_waitPath.clear();
+        S.curTab = 0; S.apkOpen = false;
+        if (g_tabs[j].path.empty()) g_tabs[j].path = S.fmPath;
+        else if (g_tabs[j].path != S.fmPath) { g_waitPath = g_tabs[j].path; g_waitFrames = 90; act("FM|GO|" + g_tabs[j].path); }
+        return;
+    }
+    g_tabs[i].closed = true;
+    selectTabIdx(g_lastFm);
+}
+
+std::string fmTabLabel(const TabDef& t, bool live) {
+    std::string p = live ? S.fmPath : t.path;
+    while (p.size() > 1 && p.back() == '/') p.pop_back();
+    if (p.empty() || p == "/sdcard" || p == "/storage/emulated/0") return T("Lokal");
+    size_t k = p.rfind('/');
+    return k == std::string::npos ? p : p.substr(k + 1);
+}
+
+// Bilah tab menyatu dengan bilah judul (tanpa garis). Satu baris, tanpa geser: tab terbuka berbagi lebar,
+// tab tertutup hanya ikon, tombol + membuka file manager baru.
 void drawTabBar(float y, float h) {
     const float d = g_density;
     const ImGuiIO& io = ImGui::GetIO();
     const float W = io.DisplaySize.x;
-    struct Tab { const char* label; Icon icon; };
-    const Tab tabs[] = {{T("Lokal"), IC_FOLDER}, {"Wi-Fi", IC_WIFI}, {"FTP", IC_PHONE}, {T("Setting"), IC_GEAR}, {"Log", IC_LOG}};
-    const int n = 5;
-    const float padX = 16.f * d, icon = 16.f * d, gap = 8.f * d;
-    float widths[5], total = 0;
-    if (g_bold) ImGui::PushFont(g_bold);
-    for (int i = 0; i < n; i++) { widths[i] = padX * 2 + icon + gap + ImGui::CalcTextSize(tabs[i].label).x; total += widths[i]; }
-    if (g_bold) ImGui::PopFont();
-
-    static float scroll = 0.f;
-    static bool dragStart = false;
-    const float maxScroll = std::max(0.f, total - W);
+    const int n = (int)g_tabs.size();
+    const float margin = 6.f * d, padL = 12.f * d, icon = 18.f * d, gap = 7.f * d, closeW = 26.f * d, plusW = 40.f * d;
+    const float iconOnlyW = icon + 20.f * d, minOpen = padL + icon + 10.f * d;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 base(0, y);
-    dl->AddRectFilled(base, ImVec2(W, y + h), g_pal.surfaceU);
-    dl->AddLine(ImVec2(0, y + h - 0.5f), ImVec2(W, y + h - 0.5f), g_pal.border);
+    dl->AddRectFilled(ImVec2(0, y), ImVec2(W, y + h), ImGui::ColorConvertFloat4ToU32(g_pal.title));
 
-    const bool inStrip = io.MousePos.y >= y && io.MousePos.y < y + h;
-    if (ImGui::IsMouseClicked(0)) dragStart = inStrip;
-    if (!io.MouseDown[0]) dragStart = false;
-    if (dragStart && ImGui::IsMouseDragging(0, 8.f * d)) {
-        scroll -= io.MouseDelta.x;
-        ImGui::ClearActiveID();
-    }
-    scroll = std::max(0.f, std::min(scroll, maxScroll));
+    auto labelOf = [&](int i) -> std::string {
+        switch (g_tabs[i].kind) {
+            case 0: return fmTabLabel(g_tabs[i], i == g_cur);
+            case 1: return "Wi-Fi";
+            case 2: return "FTP";
+            case 3: return T("Setting");
+            default: return "Log";
+        }
+    };
+    auto iconOf = [&](int k) { return k == 0 ? IC_FOLDER : k == 1 ? IC_WIFI : k == 2 ? IC_PHONE : k == 3 ? IC_GEAR : IC_LOG; };
+    auto showClose = [&](int i) { return i == g_cur && !g_tabs[i].closed && (g_tabs[i].kind != 0 || fmCount() > 1); };
 
-    dl->PushClipRect(base, ImVec2(W, y + h), true);
-    float x = (total < W) ? (W - total) * 0.5f : -scroll;
+    if (g_bold) ImGui::PushFont(g_bold);
+    std::vector<float> nat(n), w(n);
+    std::vector<std::string> lab(n);
+    float fixed = 0; int openN = 0;
     for (int i = 0; i < n; i++) {
-        const bool on = S.curTab == i;
-        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        lab[i] = labelOf(i);
+        if (g_tabs[i].closed) { w[i] = iconOnlyW; fixed += w[i]; }
+        else { nat[i] = padL + icon + gap + ImGui::CalcTextSize(lab[i].c_str()).x + (showClose(i) ? closeW : 12.f * d); openN++; }
+    }
+    if (g_bold) ImGui::PopFont();
+    float avail = W - margin * 2 - plusW - fixed;
+    // tab aktif didahulukan (label terbaca), sisanya dibagi rata (water-filling)
+    std::vector<int> pend;
+    for (int i = 0; i < n; i++) {
+        if (g_tabs[i].closed) continue;
+        if (i == g_cur) {
+            const float minActive = padL + icon + gap + 46.f * d + closeW;
+            w[i] = std::min(nat[i], std::max(minActive, avail * 0.4f));
+            avail -= w[i];
+        } else pend.push_back(i);
+    }
+    for (int pass = 0; pass < 4 && !pend.empty(); pass++) {
+        const float share = avail / (float)pend.size();
+        std::vector<int> rest;
+        bool any = false;
+        for (int i : pend) {
+            if (nat[i] <= share) { w[i] = nat[i]; avail -= nat[i]; any = true; } else rest.push_back(i);
+        }
+        pend = rest;
+        if (!any) break;
+    }
+    if (!pend.empty()) { const float share = std::max(minOpen, avail / (float)pend.size()); for (int i : pend) w[i] = share; }
+
+    float x = margin;
+    for (int i = 0; i < n; i++) {
+        const bool on = i == g_cur && !g_tabs[i].closed;
+        const float tx = x, tw = w[i], top = y + 6.f * d;
+        const bool hasX = showClose(i);
+        if (on) dl->AddRectFilled(ImVec2(tx, top), ImVec2(tx + tw, y + h), g_pal.bgU, 8.f * d, ImDrawFlags_RoundCornersTop);
+        const ImU32 col = on ? g_pal.text : IM_COL32(255, 255, 255, 225);
         ImGui::PushID(i);
-        if (ImGui::InvisibleButton("##tab", ImVec2(widths[i], h)) && !(dragStart && ImGui::IsMouseDragging(0, 8.f * d)) &&
-            fabsf(io.MouseClickedPos[0].x - io.MousePos.x) < 8.f * d) {
-            S.tabReq = i;
+        ImGui::SetCursorScreenPos(ImVec2(tx, top));
+        if (ImGui::InvisibleButton("##tab", ImVec2(tw - (hasX ? closeW : 0.f), y + h - top))) selectTabIdx(i);
+        if (hasX) {
+            ImGui::SetCursorScreenPos(ImVec2(tx + tw - closeW, top));
+            if (ImGui::InvisibleButton("##close", ImVec2(closeW, y + h - top))) closeTab(i);
+            const ImVec2 c(tx + tw - closeW * 0.5f - 2.f * d, top + (y + h - top) * 0.5f);
+            const float r = 4.5f * d;
+            dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), g_pal.text, 1.6f * d);
+            dl->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), g_pal.text, 1.6f * d);
         }
         ImGui::PopID();
-        const ImU32 col = on ? g_pal.text : ImGui::ColorConvertFloat4ToU32(g_pal.dim);
-        drawIcon(dl, tabs[i].icon, ImVec2(x + padX + icon * 0.5f, y + h * 0.5f), icon, col);
-        const float fs = ImGui::GetFontSize();
-        ImFont* f = g_bold ? g_bold : ImGui::GetFont();
-        dl->AddText(f, fs, ImVec2(x + padX + icon + gap, y + (h - fs) * 0.5f), col, tabs[i].label);
-        if (on) dl->AddRectFilled(ImVec2(x, y + h - 2.5f * d), ImVec2(x + widths[i], y + h), ImGui::ColorConvertFloat4ToU32(g_pal.accent));
-        x += widths[i];
+        const float cy = top + (y + h - top) * 0.5f;
+        if (g_tabs[i].closed) {
+            drawIcon(dl, (Icon)iconOf(g_tabs[i].kind), ImVec2(tx + tw * 0.5f, cy), icon, col);
+        } else {
+            const float textX = tx + padL + icon + gap;
+            const float textR = tx + tw - (hasX ? closeW : 6.f * d);
+            const bool room = textR - textX > 14.f * d;
+            drawIcon(dl, (Icon)iconOf(g_tabs[i].kind), ImVec2(room ? tx + padL + icon * 0.5f : tx + tw * 0.5f, cy), icon, col);
+            if (room) {
+                const float fs = ImGui::GetFontSize();
+                ImFont* f = g_bold ? g_bold : ImGui::GetFont();
+                const ImVec4 clip(textX, top, textR, y + h);
+                dl->AddText(f, fs, ImVec2(textX, cy - fs * 0.5f), col, lab[i].c_str(), nullptr, 0.f, &clip);
+            }
+        }
+        x += tw;
     }
-    dl->PopClipRect();
+    // tombol + : file manager baru
+    {
+        ImGui::SetCursorScreenPos(ImVec2(x, y + 6.f * d));
+        ImGui::PushID("plus");
+        const bool can = fmCount() < kMaxFm;
+        if (ImGui::InvisibleButton("##new", ImVec2(plusW, h - 6.f * d)) && can) newFmTab();
+        ImGui::PopID();
+        const ImVec2 c(x + plusW * 0.5f, y + 6.f * d + (h - 6.f * d) * 0.5f);
+        const float r = 6.f * d;
+        const ImU32 pc = IM_COL32(255, 255, 255, can ? 235 : 90);
+        dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), pc, 1.8f * d);
+        dl->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), pc, 1.8f * d);
+    }
 }
 
 void drawFooter(float y, float h) {
@@ -1645,8 +1817,8 @@ void drawUI() {
                  ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar(2);
 
-    // bilah judul: biru (gelap pada tema gelap), nama + versi di kiri, status Shizuku di kanan
-    const float barH = 48.f * d;
+    // bilah judul + bilah tab: satu blok biru (gelap pada tema gelap), tanpa garis pemisah
+    const float barH = 48.f * d, tabH = 44.f * d, footH = 32.f * d;
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(io.DisplaySize.x, barH), ImGui::ColorConvertFloat4ToU32(g_pal.title));
@@ -1663,30 +1835,27 @@ void drawUI() {
         const float sw = ImGui::GetFont()->CalcTextSizeA(fs * 0.92f, FLT_MAX, 0.f, st).x;
         dl->AddText(ImGui::GetFont(), fs * 0.92f, ImVec2(io.DisplaySize.x - sw - 12.f * d, (barH - fs * 0.92f) * 0.5f), white, st);
     }
-    ImGui::SetCursorPosY(barH + 8.f * d);
 
-    if (!S.shizuku) {
-        ImGui::PushStyleColor(ImGuiCol_Text, g_pal.err);
-        ImGui::TextWrapped("%s", i18n::tr(S.shizukuMsg).c_str());
-        ImGui::PopStyleColor();
-        bool first = true;
-        if (S.shizukuFailed && wrapButton("Shizuku Legacy##top", first, true)) act("LEGACY");
-        if (wrapButton(T("Hubungkan Shizuku##top"), first)) act("CONNECT");
-        if (wrapButton(T("Buka app Shizuku##top"), first)) act("OPEN_SHIZUKU");
-    }
+    // sinkron path tab FM aktif; permintaan pindah tab dari luar
+    if (g_cur >= (int)g_tabs.size()) g_cur = 0;
+    if (g_waitFrames > 0 && --g_waitFrames == 0) g_waitPath.clear();
+    if (!g_waitPath.empty() && S.fmPath == g_waitPath) g_waitPath.clear();
+    if (g_tabs[g_cur].kind == 0 && g_waitPath.empty() && !S.fmPath.empty()) g_tabs[g_cur].path = S.fmPath;
+    if (S.tabReq >= 0) { selectTabKind(S.tabReq); S.tabReq = -1; }
+    S.curTab = g_tabs[g_cur].kind;
 
-    if (S.tabReq >= 0) { S.curTab = S.tabReq; S.apkOpen = false; S.tabReq = -1; }
     if (S.pvOpen) {
+        ImGui::SetCursorPosY(barH + 8.f * d);
         drawPreview();
     } else if (S.bOpen) {
+        ImGui::SetCursorPosY(barH + 8.f * d);
         drawBrowser();
     } else if (S.apkOpen) {
+        ImGui::SetCursorPosY(barH + 8.f * d);
         drawApk();
     } else {
-        const float tabH = 46.f * d, footH = 32.f * d;
-        const float y0 = ImGui::GetCursorScreenPos().y;
-        drawTabBar(y0, tabH);
-        const float bodyY = y0 + tabH;
+        drawTabBar(barH, tabH);
+        const float bodyY = barH + tabH;
         const float bodyH = io.DisplaySize.y - bodyY - footH;
         ImGui::SetCursorScreenPos(ImVec2(0, bodyY));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f * d, 8.f * d));
@@ -1694,6 +1863,15 @@ void drawUI() {
         ImGui::BeginChild("##body", ImVec2(io.DisplaySize.x, bodyH), ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PopStyleVar(2);
+        if (!S.shizuku) {
+            ImGui::PushStyleColor(ImGuiCol_Text, g_pal.err);
+            ImGui::TextWrapped("%s", i18n::tr(S.shizukuMsg).c_str());
+            ImGui::PopStyleColor();
+            bool first = true;
+            if (S.shizukuFailed && wrapButton("Shizuku Legacy##top", first, true)) act("LEGACY");
+            if (wrapButton(T("Hubungkan Shizuku##top"), first)) act("CONNECT");
+            if (wrapButton(T("Buka app Shizuku##top"), first)) act("OPEN_SHIZUKU");
+        }
         switch (S.curTab) {
             case 0: drawFiles(); break;
             case 1:
@@ -2012,6 +2190,19 @@ JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setPeers(JNIEnv* e, jclass
     auto v = jstrings(e, names);
     std::lock_guard<std::mutex> lk(S.mu);
     S.peers = std::move(v);
+}
+
+JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setTargets(JNIEnv* e, jclass, jobjectArray names, jintArray states,
+                                                               jbooleanArray on, jint active) {
+    auto nm = jstrings(e, names);
+    std::vector<State::Target> v(nm.size());
+    jint* st = e->GetIntArrayElements(states, nullptr);
+    jboolean* ob = e->GetBooleanArrayElements(on, nullptr);
+    for (size_t i = 0; i < nm.size(); i++) { v[i].name = nm[i]; v[i].state = st[i]; v[i].on = ob[i] != 0; }
+    e->ReleaseIntArrayElements(states, st, JNI_ABORT);
+    e->ReleaseBooleanArrayElements(on, ob, JNI_ABORT);
+    std::lock_guard<std::mutex> lk(S.mu);
+    S.targets = std::move(v); S.targetActive = active;
 }
 
 JNIEXPORT void JNICALL Java_com_udyneos_ngirim_Native_setNetInfo(JNIEnv* e, jclass, jstring addr, jstring pin,

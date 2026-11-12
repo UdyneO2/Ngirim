@@ -41,6 +41,7 @@ object Native {
     // jaringan
     @JvmStatic external fun setNetPerm(ok: Boolean, msg: String)
     @JvmStatic external fun setPeers(names: Array<String>)
+    @JvmStatic external fun setTargets(names: Array<String>, states: IntArray, on: BooleanArray, active: Int)
     @JvmStatic external fun setNetInfo(addr: String, pin: String, recvDir: String, listening: Boolean, paired: String)
     @JvmStatic external fun setSendList(names: Array<String>, sizes: LongArray)
     @JvmStatic external fun setNetProgress(busy: Boolean, done: Long, total: Long, speed: Double, cur: String)
