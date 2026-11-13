@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ngirim - kirim file antar HP lewat Wi-Fi</title>
+<meta name="description" content="Ngirim: pengirim file Wi-Fi, FTP dua panel, dan file manager dalam satu aplikasi Android. Akses Android/data dan OBB lewat Shizuku, tanpa root.">
+<meta property="og:title" content="Ngirim">
+<meta property="og:description" content="Pengirim file Wi-Fi, FTP dua panel, dan file manager untuk Android. Tanpa root.">
+<meta property="og:image" content="img/icon.png">
+<link rel="icon" href="img/favicon.png">
+<style>
+:root{--bg:#f3f3f3;--surface:#fff;--fg:#1b1b1b;--muted:#4d4d4d;--border:#d0d0d0;--accent:#0078d4;--title:#0078d4;--on:#fff;--r:6px}
+@media (prefers-color-scheme:dark){:root{--bg:#1f1f1f;--surface:#2b2b2b;--fg:#f3f3f3;--muted:#c8c8c8;--border:#454545;--title:#141414;--accent:#4cc2ff;--on:#0b0b0b}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 "Source Sans 3","Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+a{color:var(--accent)}
+.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
+header.top{background:var(--title);color:#fff}
+header.top .wrap{display:flex;align-items:center;gap:16px;height:52px}
+header.top b{font-size:1.15rem}
+header.top nav{margin-left:auto;display:flex;gap:4px;align-items:center}
+header.top nav a{color:#fff;text-decoration:none;padding:6px 10px;border-radius:var(--r);opacity:.92}
+header.top nav a:hover{background:rgba(255,255,255,.15)}
+.lang{background:transparent;border:1px solid rgba(255,255,255,.5);color:#fff;border-radius:var(--r);padding:4px 10px;font:inherit;cursor:pointer}
+.hero{background:var(--title);color:#fff;padding:36px 0 0}
+.hero .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:32px;align-items:end}
+.hero h1{font-size:clamp(2rem,5vw,3.2rem);line-height:1.1;margin:0 0 12px}
+.hero p{font-size:1.1rem;max-width:34em;margin:0 0 22px;opacity:.95}
+.hero code{background:rgba(255,255,255,.18);border-color:transparent;color:#fff}
+.icon{width:72px;height:72px;border-radius:22%;margin-bottom:16px;display:block;box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:30px}
+.btn{display:inline-block;padding:12px 20px;border-radius:var(--r);font-weight:600;text-decoration:none;border:1px solid rgba(255,255,255,.6);color:#fff}
+.btn.pri{background:#fff;color:#0058a0;border-color:#fff}
+.btn:hover{filter:brightness(.95)}
+.hero .shot{display:flex;justify-content:center;gap:12px;align-items:flex-end}
+.phone{border-radius:22px 22px 0 0;border:6px solid #111;border-bottom:0;width:100%;max-width:230px;display:block;background:#000}
+.phone.b{max-width:200px;display:block}
+.meta{font-size:.9rem;opacity:.85}
+section{padding:44px 0}
+h2{font-size:1.7rem;margin:0 0 6px}
+.lead{color:var(--muted);margin:0 0 24px;max-width:46em}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.card h3{margin:0 0 4px;font-size:1.05rem}
+.card p{margin:0;color:var(--muted);font-size:.96rem}
+.shots{display:flex;gap:14px;overflow-x:auto;padding:4px 2px 14px;scroll-snap-type:x proximity}
+.shots figure{margin:0;flex:0 0 auto;width:210px;scroll-snap-align:start}
+.shots img{width:100%;height:auto;border-radius:14px;border:1px solid var(--border);display:block}
+.shots figcaption{font-size:.9rem;color:var(--muted);text-align:center;margin-top:6px}
+ol.steps{counter-reset:s;list-style:none;padding:0;margin:0;display:grid;gap:10px}
+ol.steps li{counter-increment:s;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px 12px 52px;position:relative}
+ol.steps li::before{content:counter(s);position:absolute;left:12px;top:10px;width:28px;height:28px;border-radius:50%;background:var(--accent);color:var(--on);display:grid;place-items:center;font-weight:700}
+code{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:.9em}
+footer{border-top:1px solid var(--border);padding:24px 0 40px;color:var(--muted);font-size:.92rem}
+footer a{color:inherit}
+[data-en]{display:none}
+html[lang=en] [data-en]{display:revert}
+html[lang=en] [data-id]{display:none}
+@media (max-width:760px){.hero .wrap{grid-template-columns:1fr}.hero .shot{order:2}header.top nav a.h{display:none}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <b>Ngirim</b>
+  <nav>
+    <a class="h" href="#fitur"><span data-id>Fitur</span><span data-en>Features</span></a>
+    <a class="h" href="#tampilan"><span data-id>Tampilan</span><span data-en>Screens</span></a>
+    <a class="h" href="#mulai"><span data-id>Mulai</span><span data-en>Start</span></a>
+    <a href="https://github.com/UdyneO2/Ngirim">GitHub</a>
+    <button class="lang" id="lang" type="button" aria-label="Language">EN</button>
+  </nav>
+</div></header>
+
+<div class="hero"><div class="wrap">
+  <div>
+    <img class="icon" src="img/icon.png" alt="Ngirim" width="72" height="72">
+    <h1><span data-id>Kirim file antar HP, tanpa ribet.</span><span data-en>Send files between phones, effortlessly.</span></h1>
+    <p><span data-id>Pengirim file Wi-Fi, FTP dua panel, dan file manager dalam satu aplikasi Android. Akses <code>Android/data</code> dan <code>Android/obb</code> lewat Shizuku, tanpa root dan tanpa SAF.</span>
+       <span data-en>A Wi-Fi file sender, dual-pane FTP and file manager in one Android app. Reach <code>Android/data</code> and <code>Android/obb</code> through Shizuku, no root and no SAF.</span></p>
+    <div class="btns">
+      <a class="btn pri" id="dl" href="https://github.com/UdyneO2/Ngirim/releases/latest"><span data-id>Unduh APK</span><span data-en>Download APK</span></a>
+      <a class="btn" href="https://github.com/UdyneO2/Ngirim"><span data-id>Lihat kode</span><span data-en>View source</span></a>
+    </div>
+    <div class="meta" id="ver">Android 11+ &middot; MIT</div>
+  </div>
+  <div class="shot">
+    <picture><source media="(prefers-color-scheme:dark)" srcset="img/lokal-dark.webp"><img class="phone" src="img/lokal-light.webp" alt="Tab Lokal" width="230" height="511"></picture>
+    <picture><source media="(prefers-color-scheme:dark)" srcset="img/wifi-dark.webp"><img class="phone b" src="img/wifi-light.webp" alt="Tab Wi-Fi" width="200" height="444"></picture>
+  </div>
+</div></div>
+
+<section id="fitur"><div class="wrap">
+  <h2><span data-id>Fitur</span><span data-en>Features</span></h2>
+  <p class="lead"><span data-id>Semua yang dibutuhkan untuk memindahkan file, dalam satu aplikasi ringan.</span><span data-en>Everything you need to move files, in one light app.</span></p>
+  <div class="grid">
+    <div class="card"><h3><span data-id>Kirim lewat Wi-Fi</span><span data-en>Send over Wi-Fi</span></h3><p><span data-id>Antar-HP di jaringan yang sama, dipasangkan dengan PIN 6 digit atau QR. File dan folder utuh, progres langsung.</span><span data-en>Phone to phone on the same network, paired by a 6-digit PIN or QR. Files and whole folders, live progress.</span></p></div>
+    <div class="card"><h3><span data-id>Banyak perangkat sekaligus</span><span data-en>Many devices at once</span></h3><p><span data-id>Centang beberapa HP, file dikirim berurutan dengan status tiap perangkat dan tombol ulangi yang gagal.</span><span data-en>Tick several phones; files go one after another with per-device status and a retry button.</span></p></div>
+    <div class="card"><h3><span data-id>Lanjutkan yang terputus</span><span data-en>Resume interrupted transfers</span></h3><p><span data-id>Koneksi putus tidak mengulang dari nol: sisa file disimpan dan disambung otomatis.</span><span data-en>A dropped connection does not restart from zero: partial files are kept and resumed automatically.</span></p></div>
+    <div class="card"><h3><span data-id>FTP dua panel</span><span data-en>Dual-pane FTP</span></h3><p><span data-id>Dua folder berdampingan, panel kanan bisa menunjuk HP lain. Salin dua arah dan multi-pilih dengan geser.</span><span data-en>Two folders side by side; the right pane can point at another phone. Two-way copy and drag multi-select.</span></p></div>
+    <div class="card"><h3><span data-id>File manager lengkap</span><span data-en>Full file manager</span></h3><p><span data-id>Salin, potong, tempel, arsip ZIP, pratinjau gambar, menu tekan-lama, dan banyak tab file manager.</span><span data-en>Copy, cut, paste, ZIP, image preview, long-press menu and multiple file manager tabs.</span></p></div>
+    <div class="card"><h3><span data-id>APK, XAPK, backup</span><span data-en>APK, XAPK, backup</span></h3><p><span data-id>Pasang APK/XAPK/APKS/APKM langsung, atau cadangkan aplikasi jadi <code>.xapk</code> beserta OBB dan data.</span><span data-en>Install APK/XAPK/APKS/APKM directly, or back apps up as <code>.xapk</code> with OBB and data.</span></p></div>
+    <div class="card"><h3><span data-id>Tanpa root</span><span data-en>No root</span></h3><p><span data-id>Shizuku membuka <code>Android/data</code> dan <code>Android/obb</code> tanpa SAF; ada jalur cadangan Shizuku Legacy.</span><span data-en>Shizuku opens <code>Android/data</code> and <code>Android/obb</code> without SAF, with a Shizuku Legacy fallback.</span></p></div>
+    <div class="card"><h3><span data-id>Terang, gelap, dua bahasa</span><span data-en>Light, dark, two languages</span></h3><p><span data-id>Tema terang dan gelap, Bahasa Indonesia dan Inggris mengikuti sistem, pembaruan langsung dari GitHub Releases.</span><span data-en>Light and dark themes, Indonesian and English following the system, updates straight from GitHub Releases.</span></p></div>
+  </div>
+</div></section>
+
+<section id="tampilan" style="background:var(--surface);border-block:1px solid var(--border)"><div class="wrap">
+  <h2><span data-id>Tampilan</span><span data-en>Screens</span></h2>
+  <p class="lead"><span data-id>Geser untuk melihat. Gambar mengikuti tema terang atau gelap perangkat Anda.</span><span data-en>Swipe to browse. Images follow your light or dark theme.</span></p>
+  <div class="shots">
+    <figure><picture><source media="(prefers-color-scheme:dark)" srcset="img/lokal-dark.webp"><img src="img/lokal-light.webp" alt="Lokal" loading="lazy" width="210" height="467"></picture><figcaption><span data-id>File manager</span><span data-en>File manager</span></figcaption></figure>
+    <figure><picture><source media="(prefers-color-scheme:dark)" srcset="img/wifi-dark.webp"><img src="img/wifi-light.webp" alt="Wi-Fi" loading="lazy" width="210" height="467"></picture><figcaption><span data-id>Kirim ke banyak HP</span><span data-en>Send to many phones</span></figcaption></figure>
+    <figure><picture><source media="(prefers-color-scheme:dark)" srcset="img/ftp-dark.webp"><img src="img/ftp-light.webp" alt="FTP" loading="lazy" width="210" height="467"></picture><figcaption>FTP</figcaption></figure>
+    <figure><picture><source media="(prefers-color-scheme:dark)" srcset="img/set-dark.webp"><img src="img/set-light.webp" alt="Pengaturan" loading="lazy" width="210" height="467"></picture><figcaption><span data-id>Pengaturan</span><span data-en>Settings</span></figcaption></figure>
+  </div>
+</div></section>
+
+<section id="mulai"><div class="wrap">
+  <h2><span data-id>Mulai dalam 4 langkah</span><span data-en>Get going in 4 steps</span></h2>
+  <p class="lead"><span data-id>Pasang di kedua HP, lalu:</span><span data-en>Install on both phones, then:</span></p>
+  <ol class="steps">
+    <li><span data-id>Di HP penerima, buka tab <b>Wi-Fi</b> dan nyalakan <b>Terima</b>.</span><span data-en>On the receiving phone, open the <b>Wi-Fi</b> tab and switch <b>Receive</b> on.</span></li>
+    <li><span data-id>Di HP pengirim, ketuk nama perangkat lalu masukkan PIN, atau tekan <b>Pindai QR</b>.</span><span data-en>On the sending phone, tap the device and enter the PIN, or press <b>Scan QR</b>.</span></li>
+    <li><span data-id>Pilih file atau folder, centang perangkat tujuan.</span><span data-en>Pick files or folders and tick the target devices.</span></li>
+    <li><span data-id>Tekan <b>Kirim</b>. Untuk <code>Android/data</code>, hubungkan Shizuku dulu.</span><span data-en>Press <b>Send</b>. For <code>Android/data</code>, connect Shizuku first.</span></li>
+  </ol>
+</div></section>
+
+<footer><div class="wrap">
+  <p><span data-id>Dibuat oleh</span><span data-en>Made by</span> <a href="https://github.com/UdyneO2">UdyneO2</a> &middot; MIT &middot;
+  <a href="https://github.com/UdyneO2/Ngirim/blob/main/CHANGELOG.md">Changelog</a> &middot;
+  <a href="https://github.com/UdyneO2/Ngirim/issues"><span data-id>Laporkan masalah</span><span data-en>Report an issue</span></a></p>
+  <p><span data-id>Memakai Dear ImGui (MIT), Shizuku (Apache 2.0), ZXing (Apache 2.0) dan font Source Sans 3 (SIL OFL 1.1).</span><span data-en>Uses Dear ImGui (MIT), Shizuku (Apache 2.0), ZXing (Apache 2.0) and the Source Sans 3 font (SIL OFL 1.1).</span></p>
+</div></footer>
+
+<script>
+(function(){
+  var h=document.documentElement,b=document.getElementById('lang'),k='ngirim-lang';
+  function set(l){h.lang=l;b.textContent=l==='en'?'ID':'EN';try{localStorage.setItem(k,l)}catch(e){}}
+  var s=null;try{s=localStorage.getItem(k)}catch(e){}
+  set(s||((navigator.language||'id').toLowerCase().indexOf('id')===0?'id':'en'));
+  b.onclick=function(){set(h.lang==='en'?'id':'en')};
+  // versi terbaru dari GitHub Releases (bila gagal, tautan tetap ke halaman rilis)
+  try{fetch('https://api.github.com/repos/UdyneO2/Ngirim/releases/latest').then(function(r){return r.ok?r.json():null}).then(function(j){
+    if(!j||!j.tag_name)return;
+    document.getElementById('ver').textContent=j.tag_name+' · Android 11+ · MIT';
+    var a=(j.assets||[]).filter(function(x){return /\.apk$/i.test(x.name)})[0];
+    if(a)document.getElementById('dl').href=a.browser_download_url;
+  }).catch(function(){})}catch(e){}
+})();
+</script>
+</body>
+</html>
